@@ -62,12 +62,12 @@ class TransfuserAgent(AbstractAgent):
         return SensorConfig(
             cam_f0=history_steps,
             cam_l0=history_steps,
-            cam_l1=False,
-            cam_l2=False,
+            cam_l1=history_steps,
+            cam_l2=history_steps,
             cam_r0=history_steps,
-            cam_r1=False,
-            cam_r2=False,
-            cam_b0=False,
+            cam_r1=history_steps,
+            cam_r2=history_steps,
+            cam_b0=history_steps,
             lidar_pc=history_steps if not self._config.latent else False,
         )
 
@@ -81,7 +81,13 @@ class TransfuserAgent(AbstractAgent):
 
     def forward(self, features: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """Inherited, see superclass."""
-        return self._transfuser_model(features)
+        R = features.pop("sensor2lidar_R")
+        t = features.pop("sensor2lidar_t")
+        K = features.pop("camera_K")
+        camera_feat = features["camera_feature"]
+        lidar_feat  = features.get("lidar_feature", None)
+        # TransfuserModel.forward 시 R,t,K 함께 넘기도록 시그니처 수정
+        return self._transfuser_model(camera_feat, lidar_feat, R, t, K, **features)
 
     def compute_loss(
         self,

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Tuple
-
+from dataclasses import dataclass, field
+from typing import Tuple, List, Dict, Any
 import numpy as np
 from nuplan.common.actor_state.tracked_objects_types import TrackedObjectType
 from nuplan.common.maps.abstract_map import SemanticMapLayer
@@ -10,9 +11,10 @@ from nuplan.common.maps.abstract_map import SemanticMapLayer
 class TransfuserConfig:
     """Global TransFuser config."""
 
-    image_architecture: str = "resnet34"
+    image_architecture: str = "resnet50"
     lidar_architecture: str = "resnet34"
-
+    pc_range: List[float] = field(default_factory=lambda: [-50, -50, -5, 50, 50, 3])
+    num_points_in_pillar = 4
     latent: bool = False
     latent_rad_thresh: float = 4 * np.pi / 9
 
@@ -64,15 +66,31 @@ class TransfuserConfig:
     add_features = True
 
     # Transformer
+    _dim_: int = 512
     tf_d_model: int = 256
-    tf_d_ffn: int = 1024
-    tf_num_layers: int = 3
+    tf_d_ffn: int = 512
+    tf_num_layers: int = 6
     tf_num_head: int = 8
-    tf_dropout: float = 0.0
+    tf_dropout: float = 0.1
+
+    deformable_attention: Dict[str, Any] = field(default_factory=lambda: {
+        'num_levels': 4,
+        'num_points': 8,
+        'im2col_step': 64,
+        'dropout': 0.1,
+        'batch_first': False
+    })
+
+    _num_mono_levels_ = 5
+
+     # deformable attention 내부 config
+    num_cams: int = 8
+    num_bev_queue: int = 2
+    return_intermediate: bool = False
 
     # detection
     num_bounding_boxes: int = 30
-
+   
     # loss weights
     trajectory_weight: float = 10.0
     agent_class_weight: float = 10.0
@@ -108,6 +126,7 @@ class TransfuserConfig:
     bev_features_channels: int = 64
     bev_down_sample_factor: int = 4
     bev_upsample_factor: int = 2
+    
 
     @property
     def bev_semantic_frame(self) -> Tuple[int, int]:
@@ -122,3 +141,6 @@ class TransfuserConfig:
             self.lidar_max_y,
         ]
         return max([abs(value) for value in values])
+    
+    def get(self, name: str, default=None):
+        return getattr(self, name, default)

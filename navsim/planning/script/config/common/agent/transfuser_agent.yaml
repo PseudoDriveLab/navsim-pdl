@@ -9,6 +9,6 @@ trajectory_sampling:
 config:
   _target_: navsim.agents.transfuser.transfuser_config.TransfuserConfig
   _convert_: 'all'
-  latent: False
+  latent: true
 checkpoint_path: null
 lr: 1e-4

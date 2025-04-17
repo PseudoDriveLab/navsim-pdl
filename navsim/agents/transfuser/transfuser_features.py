@@ -30,6 +30,17 @@ class TransfuserFeatureBuilder(AbstractFeatureBuilder):
         :param config: global config dataclass of TransFuser
         """
         self._config = config
+        self.crop_top, self.crop_bottom = 28, 28
+        self.crop_left, self.crop_right = 416, 416
+        # 최종 리사이즈 해상도
+        self.out_h, self.out_w = 256, 1024
+        # 사용할 카메라 순서
+        self.cam_keys = [
+            "cam_l0", "cam_l1", "cam_l2",
+            "cam_f0",
+            "cam_r0", "cam_r1", "cam_r2",
+            "cam_b0",
+        ]
 
     def get_unique_name(self) -> str:
         """Inherited, see superclass."""
@@ -38,8 +49,9 @@ class TransfuserFeatureBuilder(AbstractFeatureBuilder):
     def compute_features(self, agent_input: AgentInput) -> Dict[str, torch.Tensor]:
         """Inherited, see superclass."""
         features = {}
-
-        features["camera_feature"] = self._get_camera_feature(agent_input)
+       
+        # features["camera_feature"] = self._get_camera_feature(agent_input)
+        
         if not self._config.latent:
             features["lidar_feature"] = self._get_lidar_feature(agent_input)
         features["status_feature"] = torch.concatenate(
@@ -49,7 +61,26 @@ class TransfuserFeatureBuilder(AbstractFeatureBuilder):
                 torch.tensor(agent_input.ego_statuses[-1].ego_acceleration, dtype=torch.float32),
             ],
         )
-
+        cams = agent_input.cameras[-1]
+        print(cams.cam_f0)
+        print(cams.cam_l0)
+        Rs = []
+        ts = []
+        Ks = []
+        #TODO: features["camera_feature"] 안에다가 cam_l0, cam_l1, cam_l2, cam_f0, cam_r0, cam_r1, cam_r2, cam_b0 모두 넣어야 함
+        for cam in [cams.cam_l0, cams.cam_l1, cams.cam_l2,
+                    cams.cam_f0,
+                    cams.cam_r0, cams.cam_r1, cams.cam_r2, cams.cam_b0]:
+            # (예시: cam_l1.image 가 None 인 경우 체크 필요)
+            print(cam.sensor2lidar_rotation,cam.sensor2lidar_translation,cam.intrinsics)
+            Rs.append(torch.from_numpy(cam.sensor2lidar_rotation).float())
+            ts.append(torch.from_numpy(cam.sensor2lidar_translation).float())
+            Ks.append(torch.from_numpy(cam.intrinsics).float())
+        # shape: (6,3,3), (6,3), (6,3,3)
+        features["sensor2lidar_R"] = torch.stack(Rs, dim=0)
+        features["sensor2lidar_t"] = torch.stack(ts, dim=0)
+        features["camera_K"]      = torch.stack(Ks, dim=0)
+        
         return features
 
     def _get_camera_feature(self, agent_input: AgentInput) -> torch.Tensor:

@@ -5,7 +5,8 @@ import torch
 import torch.nn as nn
 from nuplan.planning.simulation.trajectory.trajectory_sampling import TrajectorySampling
 
-from navsim.agents.transfuser.transfuser_backbone import TransfuserBackbone
+# from navsim.agents.transfuser.transfuser_backbone import TransfuserBackbone
+from navsim.agents.transfuser.transfuser_backbone import BEVFormerV2
 from navsim.agents.transfuser.transfuser_config import TransfuserConfig
 from navsim.agents.transfuser.transfuser_features import BoundingBox2DIndex
 from navsim.common.enums import StateSE2Index
@@ -29,7 +30,7 @@ class TransfuserModel(nn.Module):
         ]
 
         self._config = config
-        self._backbone = TransfuserBackbone(config)
+        self._backbone = BEVFormerV2(config)
 
         self._keyval_embedding = nn.Embedding(8**2 + 1, config.tf_d_model)  # 8x8 feature grid + trajectory
         self._query_embedding = nn.Embedding(sum(self._query_splits), config.tf_d_model)
@@ -87,19 +88,26 @@ class TransfuserModel(nn.Module):
             d_model=config.tf_d_model,
         )
 
-    def forward(self, features: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def forward(self,
+                camera_feature, 
+                lidar_feature,
+                R_list,     # (6,3,3)
+                t_list,     # (6,3)
+                K_list,     # (6,3,3)
+                status_feature) -> Dict[str, torch.Tensor]:
         """Torch module forward pass."""
 
-        camera_feature: torch.Tensor = features["camera_feature"]
-        if self._config.latent:
-            lidar_feature = None
-        else:
-            lidar_feature: torch.Tensor = features["lidar_feature"]
-        status_feature: torch.Tensor = features["status_feature"]
+        # camera_feature: torch.Tensor = features["camera_feature"]
+        # if self._config.latent:
+        #     lidar_feature = None
+        # else:
+        #     lidar_feature: torch.Tensor = features["lidar_feature"]
+        # status_feature: torch.Tensor = features["status_feature"]
 
         batch_size = status_feature.shape[0]
 
-        bev_feature_upscale, bev_feature, _ = self._backbone(camera_feature, lidar_feature)
+        bev_feature_upscale, bev_feature, _ = self._backbone(camera_feature, lidar_feature
+                                                             , R_list=R_list, t_list=t_list, K_list=K_list)
 
         bev_feature = self._bev_downscale(bev_feature).flatten(-2, -1)
         bev_feature = bev_feature.permute(0, 2, 1)

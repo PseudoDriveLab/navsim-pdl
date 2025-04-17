@@ -1,5 +1,5 @@
 import logging
-
+import os
 import hydra
 from nuplan.planning.script.builders.logging_builder import build_logger
 from omegaconf import DictConfig
@@ -11,7 +11,8 @@ logger = logging.getLogger(__name__)
 
 CONFIG_PATH = "config/metric_caching"
 CONFIG_NAME = "default_metric_caching"
-
+os.environ["RAY_memory_usage_threshold"] = "0.80"
+os.environ["RAY_memory_monitor_refresh_ms"] = "0"
 
 @hydra.main(config_path=CONFIG_PATH, config_name=CONFIG_NAME, version_base=None)
 def main(cfg: DictConfig) -> None:
