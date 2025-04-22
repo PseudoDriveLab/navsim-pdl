@@ -84,7 +84,7 @@ class TransfuserConfig:
     _num_mono_levels_ = 5
 
      # deformable attention 내부 config
-    num_cams: int = 8
+    num_cams: int = 4
     num_bev_queue: int = 2
     return_intermediate: bool = False
 

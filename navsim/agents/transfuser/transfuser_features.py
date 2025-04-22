@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import numpy.typing as npt
 import torch
+import torch.nn.functional as F
 from nuplan.common.actor_state.oriented_box import OrientedBox
 from nuplan.common.actor_state.state_representation import StateSE2
 from nuplan.common.actor_state.tracked_objects_types import TrackedObjectType
@@ -62,21 +63,47 @@ class TransfuserFeatureBuilder(AbstractFeatureBuilder):
             ],
         )
         cams = agent_input.cameras[-1]
-        print(cams.cam_f0)
-        print(cams.cam_l0)
-        Rs = []
-        ts = []
-        Ks = []
-        #TODO: features["camera_feature"] 안에다가 cam_l0, cam_l1, cam_l2, cam_f0, cam_r0, cam_r1, cam_r2, cam_b0 모두 넣어야 함
-        for cam in [cams.cam_l0, cams.cam_l1, cams.cam_l2,
-                    cams.cam_f0,
-                    cams.cam_r0, cams.cam_r1, cams.cam_r2, cams.cam_b0]:
-            # (예시: cam_l1.image 가 None 인 경우 체크 필요)
-            print(cam.sensor2lidar_rotation,cam.sensor2lidar_translation,cam.intrinsics)
+        # cam_list = [
+        #     cams.cam_l0, cams.cam_l1, cams.cam_l2,
+        #     cams.cam_f0,
+        #     cams.cam_r0, cams.cam_r1, cams.cam_r2, cams.cam_b0
+        # ]
+        
+        cam_list = [
+            cams.cam_l0,
+            cams.cam_f0,
+            cams.cam_r0,
+            cams.cam_b0,
+        ]
+        print("cam_list len:", len(cam_list))
+        imgs = []
+        Rs  = []
+        ts  = []
+        Ks  = []
+        for cam in cam_list:
+            # 원본 크기
+            h0, w0 = cam.image.shape[:2]                     # (1080, 1920)
+            img = torch.from_numpy(cam.image).permute(2,0,1).float() / 255.0    # (3,1080,1920)
+
+            # 1/4 크기로 리사이즈
+            h, w = h0 // 4, w0 // 4
+            img = F.interpolate(img.unsqueeze(0), size=(h,w), mode='bilinear', align_corners=False)
+            img = img.squeeze(0)
+            imgs.append(img)
+
+            # 원본 K → scale
+            K = torch.from_numpy(cam.intrinsics).float()  # (3,3)
+            scale_mat = torch.diag(torch.tensor([w/w0, h/h0, 1.], dtype=torch.float32))
+            K_scaled = scale_mat @ K @ torch.inverse(scale_mat)  # 또는 간단히:
+            # K_scaled[0, :] *= (w / w0)
+            # K_scaled[1, :] *= (h / h0)
+
             Rs.append(torch.from_numpy(cam.sensor2lidar_rotation).float())
             ts.append(torch.from_numpy(cam.sensor2lidar_translation).float())
-            Ks.append(torch.from_numpy(cam.intrinsics).float())
-        # shape: (6,3,3), (6,3), (6,3,3)
+            # print("cam.sensor2lidar_translation.shape:", cam.sensor2lidar_translation.shape)
+            Ks.append(K_scaled)
+
+        features["camera_feature"] = torch.stack(imgs, dim=0)  # (8, 3, h, w)
         features["sensor2lidar_R"] = torch.stack(Rs, dim=0)
         features["sensor2lidar_t"] = torch.stack(ts, dim=0)
         features["camera_K"]      = torch.stack(Ks, dim=0)

@@ -17,12 +17,12 @@ defaults:
 split: trainval
 cache_path: ${oc.env:NAVSIM_EXP_ROOT}/training_cache
 use_cache_without_dataset: false # load the training samples from the cache. scene-filter will be ignored
-force_cache_computation: false # force the cache computation even if it exists
+force_cache_computation: true # force the cache computation even if it exists
 seed: 0
 
 dataloader:
   params:
-    batch_size: 32  # number of samples per batch
+    batch_size: 4  # number of samples per batch
     num_workers: 4  # number of workers for data loading
     pin_memory: true  # pin memory for faster GPU transfer
     prefetch_factor: 2  # number of samples loaded in advance by each worker

@@ -81,25 +81,40 @@ class BEVFormerV2(nn.Module):
 
     def forward(self, camera_feature: torch.Tensor, lidar_feature: torch.Tensor, R_list: torch.Tensor, t_list: torch.Tensor, K_list: torch.Tensor):
         # 1) backbone + FPN
-        print(camera_feature.shape, R_list.shape, t_list.shape, K_list.shape)
-        _, _, H_img, W_img = camera_feature.shape
-        lidar2img = []
-        for i in range(8):
-            R = R_list[i]           # (3,3)
-            t = t_list[i].view(3,1) # (3,1)
-            K = K_list[i]           # (3,3)
-            ext = torch.eye(4, device=R.device)
-            ext[:3,:3] = R
-            ext[:3,3:] = t
-            K4 = torch.eye(4, device=K.device)
-            K4[:3,:3] = K
-            P = K4 @ ext          # (4×4)
-            lidar2img.append(P)
-        lidar2img = torch.stack(lidar2img, dim=0)  # (6,4,4)
-
-        feats    = self.backbone(camera_feature)
+        if camera_feature.dtype == torch.uint8:
+            camera_feature = camera_feature.float() / 255.0
+        B, N_cam, C, H_img, W_img = camera_feature.shape
+        x = camera_feature.view(B * N_cam, C, H_img, W_img)
+        feats    = self.backbone(x)
         fpn_outs = self.fpn(feats)
-        bev_feat = fpn_outs[-1]               # (B, 256, H, W)
+        # print(camera_feature.shape, R_list.shape, t_list.shape, K_list.shape)
+        mlvl_feats = []
+        for lvl_feat in fpn_outs:
+            bnc, Ci, Hi, Wi = lvl_feat.shape
+            mlvl_feats.append(lvl_feat.view(B, N_cam, Ci, Hi, Wi))
+
+        lidar2img = []
+        print("t_list.shape =", t_list.shape)
+        print("t_list[0].shape =", t_list[0].shape)
+        for i in range(N_cam):
+            R = R_list[i]           # (3,3)
+            t = t_list[i].view(3, 1)  # (3,1)
+            K = K_list[i]           # (3,3)
+
+            ext = torch.eye(4, device=R.device)
+            ext[:3, :3] = R
+            ext[:3,  3:] = t       # or ext[:3,3] = t.squeeze(-1)
+
+            K4 = torch.eye(4, device=K.device)
+            K4[:3, :3] = K
+
+            P = K4 @ ext           # (4,4)
+            lidar2img.append(P)
+
+        # Shape: (8, 4, 4)
+        lidar2img = torch.stack(lidar2img, dim=0)
+
+        bev_feat = mlvl_feats[-1].mean(dim=1)  # [B, C_out, H, W]
         B,C,H,W  = bev_feat.shape
 
         # 2) BEV query → Encoder

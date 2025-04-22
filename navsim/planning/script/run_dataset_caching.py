@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 
 CONFIG_PATH = "config/training"
 CONFIG_NAME = "default_training"
-
+os.environ["RAY_memory_usage_threshold"] = "0.80"
+os.environ["RAY_memory_monitor_refresh_ms"] = "0"
 
 def cache_features(
     args: List[Dict[str, Union[List[str], DictConfig]]]

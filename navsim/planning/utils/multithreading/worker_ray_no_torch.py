@@ -53,7 +53,7 @@ def initialize_ray(
     if master_node_ip and use_distributed:
         # Connect to ray remotely to node ip
         logger.info(f"Connecting to cluster at: {master_node_ip}!")
-        ray.init(address=f"ray://{master_node_ip}:10001", local_mode=local_mode, log_to_driver=log_to_driver)
+        ray.init(address=f"ray://{master_node_ip}:10001", local_mode=local_mode, log_to_driver=log_to_driver,object_store_memory=5 * 1024**3,memory=10 * 1024**3,)
         number_of_nodes = 1
     elif env_var_master_node_ip in os.environ and use_distributed:
         # In this way, we started ray on the current machine which generated password and master node ip:
@@ -69,6 +69,7 @@ def initialize_ray(
             _redis_password=redis_password,
             log_to_driver=log_to_driver,
             local_mode=local_mode,
+            object_store_memory=5 * 1024**3,memory=10 * 1024**3,
         )
     else:
         # In this case, we will just start ray directly from this script
@@ -79,6 +80,7 @@ def initialize_ray(
             dashboard_host="0.0.0.0",
             local_mode=local_mode,
             log_to_driver=log_to_driver,
+            object_store_memory=1e+9 ,
         )
 
     return WorkerResources(
