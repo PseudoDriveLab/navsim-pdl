@@ -141,16 +141,16 @@ class BEVFormerLayer(nn.Module):
             batch_first=False
         )
         
-        self.norm1 = nn.LayerNorm(256)
-        self.norm2 = nn.LayerNorm(256)
-        self.norm3 = nn.LayerNorm(256)
+        self.norm1 = nn.LayerNorm(temporal_cfg.get('embed_dims', 256))
+        self.norm2 = nn.LayerNorm(temporal_cfg.get('embed_dims', 256))
+        self.norm3 = nn.LayerNorm(temporal_cfg.get('embed_dims', 256))
         self.ffn = nn.Sequential(
-            nn.Linear(256, feedforward_channels),
+            nn.Linear(temporal_cfg.get('embed_dims', 256), feedforward_channels),
             nn.ReLU(),
             nn.Dropout(ffn_dropout),
-            nn.Linear(feedforward_channels, 256)
+            nn.Linear(feedforward_channels, temporal_cfg.get('embed_dims', 256))
         )
-        self.norm4 = nn.LayerNorm(256)
+        self.norm4 = nn.LayerNorm(temporal_cfg.get('embed_dims', 256))
     
     def forward(self, bev_query, key, value, **kwargs):
         """

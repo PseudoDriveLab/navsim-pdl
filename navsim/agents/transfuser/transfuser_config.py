@@ -11,7 +11,8 @@ from nuplan.common.maps.abstract_map import SemanticMapLayer
 class TransfuserConfig:
     """Global TransFuser config."""
 
-    image_architecture: str = "resnet50"
+    # image_architecture: str = "resnet50"
+    image_architecture: str = "resnet18"
     lidar_architecture: str = "resnet34"
     pc_range: List[float] = field(default_factory=lambda: [-50, -50, -5, 50, 50, 3])
     num_points_in_pillar = 4
@@ -68,14 +69,23 @@ class TransfuserConfig:
     add_features = True
 
     # Transformer
-    _dim_: int = 256
-    tf_d_model: int = 256
-    tf_d_ffn: int = 512
-    tf_num_layers: int = 6
-    tf_num_head: int = 8
+
+    # _dim_: int = 256
+    _dim_: int = 192
+    # tf_d_model: int = 256
+    # tf_d_ffn: int = 512
+    # tf_num_layers: int = 6
+    # tf_num_head: int = 8
     tf_dropout: float = 0.1
 
+    tf_num_layers: int = 4        # 6 → 4
+    tf_d_model: int = 192      # 256 → 192
+    tf_d_ffn: int = 384      # 512 → 384
+    tf_num_head: int = 6      # 8  → 6  (d_model % head == 0)
+
     deformable_attention: Dict[str, Any] = field(default_factory=lambda: {
+        # 'embed_dims': 256,
+        'embed_dims': 192,
         'num_levels': 4,
         'num_points': 8,
         'im2col_step': 64,

@@ -80,16 +80,38 @@ class TransfuserAgent(AbstractAgent):
         return [TransfuserFeatureBuilder(config=self._config)]
 
     def forward(self, features: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        """Inherited, see superclass."""
-        
-        R = features.pop("sensor2lidar_R")
-        t = features.pop("sensor2lidar_t")
-        # print("cam.sensor2lidar_translation.shape:", t.shape)
-        K = features.pop("camera_K")
-        camera_feat = features.pop("camera_feature")
-        lidar_feat  = features.pop("lidar_feature", None)
-        # TransfuserModel.forward 시 R,t,K 함께 넘기도록 시그니처 수정
-        return self._transfuser_model(camera_feat, lidar_feat, R, t, K, **features)
+        """
+        features:
+            ├─ camera_feature        (B, N_cam, 3, H, W)
+            ├─ lidar_feature         (optional)
+            ├─ sensor2lidar_R        (B, N_cam, 3, 3)
+            ├─ sensor2lidar_t        (B, N_cam, 3)
+            ├─ camera_K             (B, N_cam, 3, 3)
+            └─ 기타 추가 feature …
+        """
+        R           = features["sensor2lidar_R"]
+        t           = features["sensor2lidar_t"]
+        K           = features["camera_K"]
+        camera_feat = features["camera_feature"]
+        lidar_feat  = features.get("lidar_feature", None)
+
+        rest = {
+            k: v for k, v in features.items()
+            if k not in {
+                "camera_feature",
+                "lidar_feature",
+                "sensor2lidar_R",
+                "sensor2lidar_t",
+                "camera_K",
+            }
+        }
+
+        return self._transfuser_model(
+            camera_feat,          # positional arg
+            lidar_feat,           # positional arg
+            R, t, K,              # positional arg
+            **rest                # 나머지 feature 들
+        )
 
     def compute_loss(
         self,

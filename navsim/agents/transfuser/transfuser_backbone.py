@@ -87,6 +87,10 @@ class BEVFormerV2(nn.Module):
         spat_cfg = cfg.deformable_attention.copy()
         spat_cfg.pop('type', None)
         spat_cfg.update({
+            'deformable_attention': {          
+                **cfg.deformable_attention,
+                'embed_dims': cfg.tf_d_model,  # 필요하면 override
+            },
             'embed_dims': cfg.tf_d_model,
             'num_cams':   cfg.num_cams,
             'pc_range':   cfg.pc_range,

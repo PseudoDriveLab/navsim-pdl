@@ -5,6 +5,7 @@ import numpy as np
 import numpy.typing as npt
 import pytorch_lightning as pl
 import torch
+import torch.nn.functional as F
 import torchvision.utils as vutils
 from nuplan.common.actor_state.oriented_box import OrientedBox
 from nuplan.common.actor_state.state_representation import StateSE2
@@ -89,53 +90,64 @@ class TransfuserCallback(pl.Callback):
             grid = self._visualize_model(features, targets, predictions)
             trainer.logger.experiment.add_image(f"train_plot_{idx_plot}", grid, global_step=trainer.current_epoch)
 
-    def _visualize_model(
-        self,
-        features: Dict[str, torch.Tensor],
-        targets: Dict[str, torch.Tensor],
-        predictions: Dict[str, torch.Tensor],
-    ) -> torch.Tensor:
-        """
-        Create tile of input-output visualizations for TransFuser.
-        :param features: dictionary of feature names and tensors
-        :param targets: dictionary of target names and tensors
-        :param predictions: dictionary of target names and predicted tensors
-        :return: image tiles as RGB tensors
-        """
-        camera = features["camera_feature"].permute(0, 2, 3, 1).numpy()
-        bev = targets["bev_semantic_map"].numpy()
-        lidar_map = features["lidar_feature"].squeeze(1).numpy()
-        agent_labels = targets["agent_labels"].numpy()
-        agent_states = targets["agent_states"].numpy()
-        trajectory = targets["trajectory"].numpy()
+    
 
-        pred_bev = predictions["bev_semantic_map"].argmax(1).numpy()
-        pred_agent_labels = predictions["agent_labels"].sigmoid().numpy()
-        pred_agent_states = predictions["agent_states"].numpy()
-        pred_trajectory = predictions["trajectory"].numpy()
+    def _visualize_model(self, features, targets, predictions):
+        cam = features["camera_feature"]                          # float32 [0..1]
+        B, N, C, H, W = cam.shape
+        cam = cam.permute(0,1,3,4,2).reshape(B, N*H, W, C)        # (B, 4H, W, 3)
+        cam = cam.permute(0,3,1,2).contiguous()                   # (B,3,4H,W)
+        cam = F.interpolate(cam, size=(256,1024), mode="bilinear", align_corners=False)
+        cam_uint8 = (cam.clamp(0,1)*255).byte().permute(0,2,3,1).cpu().numpy()  # (B,256,1024,3)
 
-        plots = []
-        for sample_idx in range(self._num_rows * self._num_columns):
-            plot = np.zeros((256, 768, 3), dtype=np.uint8)
-            plot[:128, :512] = (camera[sample_idx] * 255).astype(np.uint8)[::2, ::2]
+        # BEV GT / Pred (원래 128×256)
+        bev_gt   = targets["bev_semantic_map"].cpu().numpy()      # (B,128,256)
+        bev_pred = predictions["bev_semantic_map"].argmax(1).cpu().numpy()  # (B,128,256)
 
-            plot[128:, :256] = semantic_map_to_rgb(bev[sample_idx], self._config)
-            plot[128:, 256:512] = semantic_map_to_rgb(pred_bev[sample_idx], self._config)
+        # LiDAR + Box
+        lidar_map      = features["lidar_feature"].squeeze(1).cpu().numpy()  # (B,256,256)
+        agent_labels   = targets["agent_labels"].cpu().numpy()
+        agent_states   = targets["agent_states"].cpu().numpy()
+        trajectory_gt  = targets["trajectory"].cpu().numpy()
+        agent_p_labels = predictions["agent_labels"].sigmoid().cpu().numpy()
+        agent_p_states = predictions["agent_states"].cpu().numpy()
+        trajectory_p   = predictions["trajectory"].cpu().numpy()
 
-            agent_states_ = agent_states[sample_idx][agent_labels[sample_idx]]
-            pred_agent_states_ = pred_agent_states[sample_idx][pred_agent_labels[sample_idx] > 0.5]
-            plot[:, 512:] = lidar_map_to_rgb(
-                lidar_map[sample_idx],
-                agent_states_,
-                pred_agent_states_,
-                trajectory[sample_idx],
-                pred_trajectory[sample_idx],
-                self._config,
-            )
+        tiles = []
+        for i in range(self._num_rows * self._num_columns):
+            # 전체 타일 크기: 높이 256+256=512, 너비 1024+512=1536
+            tile = np.zeros((512, 1536, 3), dtype=np.uint8)
 
-            plots.append(torch.tensor(plot).permute(2, 0, 1))
+            # ── ① 왼쪽 상단: 카메라 원본 ───────────────────────────
+            tile[0:256, 0:1024] = cam_uint8[i]
 
-        return vutils.make_grid(plots, normalize=False, nrow=self._num_rows)
+            # ── ② 왼쪽 하단: BEV GT (128→256↑, 256→512↑) ───────────
+            gt_rgb = semantic_map_to_rgb(bev_gt[i], self._config)    # (128,256,3)
+            gt_rgb = cv2.resize(gt_rgb, (512,256), interpolation=cv2.INTER_NEAREST)
+            tile[256:512, 0:512] = gt_rgb
+
+            # ── ③ 중앙 하단: BEV Pred (128→256↑, 256→512↑) ──────────
+            pred_rgb = semantic_map_to_rgb(bev_pred[i], self._config)
+            pred_rgb = cv2.resize(pred_rgb, (512,256), interpolation=cv2.INTER_NEAREST)
+            tile[256:512, 512:1024] = pred_rgb
+
+            # ── ④ 오른쪽 전체: LiDAR + Box ────────────────────────
+            lidar_rgb = lidar_map_to_rgb(
+                lidar_map[i],
+                agent_states[i][agent_labels[i]],
+                agent_p_states[i][agent_p_labels[i] > 0.5],
+                trajectory_gt[i],
+                trajectory_p[i],
+                self._config
+            )  # 이 함수가 (256,256,3) 리턴한다고 가정
+            # LiDAR 맵도 256→512로 업샘플
+            lidar_rgb = cv2.resize(lidar_rgb, (512,512), interpolation=cv2.INTER_NEAREST)
+            tile[:, 1024:1536] = lidar_rgb
+
+            tiles.append(torch.from_numpy(tile).permute(2,0,1))
+
+        # (C, H, W)xB → 그리드
+        return vutils.make_grid(tiles, nrow=self._num_rows, normalize=False)
 
 
 def dict_to_device(dict: Dict[str, torch.Tensor], device: Union[torch.device, str]) -> Dict[str, torch.Tensor]:
