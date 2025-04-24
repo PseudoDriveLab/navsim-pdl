@@ -118,7 +118,7 @@ class BEVFormerLayer(nn.Module):
         
         temporal_cfg = attn_cfgs[0]
         self.temporal_attn = TemporalSelfAttention(
-            embed_dims=temporal_cfg.get('embed_dims', 256),
+            embed_dims=temporal_cfg.get('embed_dims', 512),
             num_heads=temporal_cfg.get('num_heads', 8),
             num_levels=temporal_cfg.get('num_levels', 1),
             num_points=temporal_cfg.get('num_points', 4),
@@ -130,7 +130,7 @@ class BEVFormerLayer(nn.Module):
         spatial_cfg = attn_cfgs[1]
         deformable_cfg = spatial_cfg.get('deformable_attention', {})
         self.spatial_attn = SpatialCrossAttention(
-            embed_dims=spatial_cfg.get('embed_dims', 256),
+            embed_dims=spatial_cfg.get('embed_dims', 512),
             num_cams=spatial_cfg.get('num_cams', 6),
             pc_range=spatial_cfg.get('pc_range', None),
             dropout=spatial_cfg.get('dropout', 0.1),
@@ -151,7 +151,7 @@ class BEVFormerLayer(nn.Module):
     
     def forward(self, bev_query, key, value, **kwargs):
         out = bev_query
-        out = self.temporal_attn(out, key, value, **kwargs)
+        out = self.temporal_attn(out, kwargs['prev_bev'], kwargs['prev_bev'], **kwargs)
         out = self.norm1(out)
         out = self.spatial_attn(out, key, value, **kwargs)
         out = self.norm2(out)

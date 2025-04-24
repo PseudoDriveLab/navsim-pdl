@@ -55,25 +55,59 @@ class TemporalSelfAttention(nn.Module):
                 flag='decoder',
                 **kwargs):
         if value is None:
-            value = query
+            print('value is None')
+            bs, len_bev, c = query.shape
+            value = torch.stack([query, query], 1).reshape(bs*2, len_bev, c)
         if identity is None:
             identity = query
         if query_pos is not None:
             query = query + query_pos
 
         bs, num_query, _ = query.shape
+        _, num_value, _ = value.shape
+        print(query.shape)
+        print(value.shape)
+        print(spatial_shapes.shape)
+        print((spatial_shapes[:,0] * spatial_shapes[:,1]).sum())
+        spatial_shapes=torch.tensor([[kwargs['bev_h'], kwargs['bev_w']]], device=query.device)
+        assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == num_value
+        
         combined = torch.cat([value[:bs], query], dim=-1)
+        
         value = self.value_proj(value)
         sampling_offsets = self.sampling_offsets(combined)
         attention_weights = self.attention_weights(combined)
         attention_weights = F.softmax(attention_weights, dim=-1)
 
+        # queue 차원 포함
+        sampling_offsets = sampling_offsets.view(
+            bs, num_query, self.num_heads, self.num_bev_queue,
+            self.num_levels, self.num_points, 2)            # (bs,q,h,Q,Lv,P,2)
+
+        attention_weights = attention_weights.view(
+            bs, num_query, self.num_heads, self.num_bev_queue,
+            self.num_levels, self.num_points)               # (bs,q,h,Q,Lv,P)
+
+        # deform-attn 으로 넘길 때 (bs*Q, …) 형태로 펼치기
+        sampling_offsets = sampling_offsets.permute(0, 3, 1, 2, 4, 5, 6)\
+                                        .reshape(bs*self.num_bev_queue, num_query,
+                                                    self.num_heads, self.num_levels,
+                                                    self.num_points, 2)
+
+        attention_weights = attention_weights.permute(0, 3, 1, 2, 4, 5)\
+                                            .reshape(bs*self.num_bev_queue, num_query,
+                                                    self.num_heads, self.num_levels,
+                                                    self.num_points)
+
         output = self.ms_deform_attn(
             value,
             spatial_shapes,
             level_start_index,
-            sampling_offsets.view(bs, num_query, self.num_heads, self.num_levels, self.num_points, 2),
-            attention_weights.view(bs, num_query, self.num_heads, self.num_levels, self.num_points)
+            sampling_offsets,
+            attention_weights
         )
+        # --- queue → batch 축소 ---
+        output = output.view(self.num_bev_queue, bs, num_query, self.embed_dims).mean(0)
+
         output = self.output_proj(output)
         return self.dropout(output) + identity

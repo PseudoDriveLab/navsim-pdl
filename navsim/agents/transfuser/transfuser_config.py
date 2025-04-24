@@ -37,7 +37,8 @@ class TransfuserConfig:
     camera_height: int = 256
     lidar_resolution_width = 256
     lidar_resolution_height = 256
-
+    bev_grid_h: int = lidar_resolution_height // 8   # 예: 256/8 = 32
+    bev_grid_w: int = lidar_resolution_width  // 8   # 예: 256/8 = 32
     img_vert_anchors: int = 256 // 32
     img_horz_anchors: int = 1024 // 32
     lidar_vert_anchors: int = 256 // 32
@@ -50,6 +51,8 @@ class TransfuserConfig:
     embd_pdrop = 0.1
     resid_pdrop = 0.1
     attn_pdrop = 0.1
+
+    embed_dims = 512
     # Mean of the normal distribution initialization for linear layers in the GPT
     gpt_linear_layer_init_mean = 0.0
     # Std of the normal distribution initialization for linear layers in the GPT
@@ -67,7 +70,7 @@ class TransfuserConfig:
 
     # Transformer
     _dim_: int = 512
-    tf_d_model: int = 256
+    tf_d_model: int = 512
     tf_d_ffn: int = 512
     tf_num_layers: int = 6
     tf_num_head: int = 8
