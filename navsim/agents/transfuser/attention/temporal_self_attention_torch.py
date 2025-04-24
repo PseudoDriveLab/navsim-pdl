@@ -55,7 +55,6 @@ class TemporalSelfAttention(nn.Module):
                 flag='decoder',
                 **kwargs):
         if value is None:
-            print('value is None')
             bs, len_bev, c = query.shape
             value = torch.stack([query, query], 1).reshape(bs*2, len_bev, c)
         if identity is None:
@@ -65,10 +64,10 @@ class TemporalSelfAttention(nn.Module):
 
         bs, num_query, _ = query.shape
         _, num_value, _ = value.shape
-        print(query.shape)
-        print(value.shape)
-        print(spatial_shapes.shape)
-        print((spatial_shapes[:,0] * spatial_shapes[:,1]).sum())
+        # print('query shape: ', query.shape)
+        # print('value shape: ', value.shape)
+        # print(spatial_shapes.shape)
+        # print((spatial_shapes[:,0] * spatial_shapes[:,1]).sum())
         spatial_shapes=torch.tensor([[kwargs['bev_h'], kwargs['bev_w']]], device=query.device)
         assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == num_value
         

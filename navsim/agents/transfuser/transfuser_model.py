@@ -31,12 +31,20 @@ class TransfuserModel(nn.Module):
 
         self._config = config
         self._backbone = BEVFormerV2(config)
-
-        self._keyval_embedding = nn.Embedding(8**2 + 1, config.tf_d_model)  # 8x8 feature grid + trajectory
+        num_bev_tokens = config.bev_grid_h * config.bev_grid_w      # 예: 128×128 = 16384
+        self._keyval_embedding = nn.Embedding(
+            num_bev_tokens + 1,          # +1 = status_token
+            config.tf_d_model
+        )
+        # self._keyval_embedding = nn.Embedding(8**2 + 1, config.tf_d_model)  # 8x8 feature grid + trajectory
         self._query_embedding = nn.Embedding(sum(self._query_splits), config.tf_d_model)
 
         # usually, the BEV features are variable in size.
-        self._bev_downscale = nn.Conv2d(512, config.tf_d_model, kernel_size=1)
+        self._bev_downscale = nn.Conv2d(
+            in_channels=config._dim_,          # ← 512 → 256 로 변경
+            out_channels=config.tf_d_model,    # 256
+            kernel_size=1
+        )
         self._status_encoding = nn.Linear(4 + 2 + 2, config.tf_d_model)
 
         self._bev_semantic_head = nn.Sequential(

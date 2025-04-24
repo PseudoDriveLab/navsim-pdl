@@ -75,7 +75,7 @@ class TransfuserFeatureBuilder(AbstractFeatureBuilder):
             cams.cam_r0,
             cams.cam_b0,
         ]
-        print("cam_list len:", len(cam_list))
+        # print("cam_list len:", len(cam_list))
         imgs = []
         Rs  = []
         ts  = []

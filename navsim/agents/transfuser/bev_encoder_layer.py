@@ -85,6 +85,9 @@ class SpatialCrossAttention(nn.Module):
         
         # 만약 key/value는 전체 query에 대해 제공되었다면 reshape가 필요하거나, 카메라 별로 분리되어 있는지 확인합니다.
         # 여기서는 간단하게 key, value를 reshape하지 않고 deformable_attention에 전달한다 가정합니다.
+
+        kwargs.pop('reference_points', None)
+
         out = self.deformable_attention(query=queries_reshape, key=key, value=value,
                                         reference_points=ref_points_reshape, 
                                         spatial_shapes=spatial_shapes, level_start_index=level_start_index, **kwargs)
@@ -118,7 +121,7 @@ class BEVFormerLayer(nn.Module):
         
         temporal_cfg = attn_cfgs[0]
         self.temporal_attn = TemporalSelfAttention(
-            embed_dims=temporal_cfg.get('embed_dims', 512),
+            embed_dims=temporal_cfg.get('embed_dims', 256),
             num_heads=temporal_cfg.get('num_heads', 8),
             num_levels=temporal_cfg.get('num_levels', 1),
             num_points=temporal_cfg.get('num_points', 4),
@@ -130,7 +133,7 @@ class BEVFormerLayer(nn.Module):
         spatial_cfg = attn_cfgs[1]
         deformable_cfg = spatial_cfg.get('deformable_attention', {})
         self.spatial_attn = SpatialCrossAttention(
-            embed_dims=spatial_cfg.get('embed_dims', 512),
+            embed_dims=spatial_cfg.get('embed_dims', 256),
             num_cams=spatial_cfg.get('num_cams', 6),
             pc_range=spatial_cfg.get('pc_range', None),
             dropout=spatial_cfg.get('dropout', 0.1),
@@ -150,10 +153,27 @@ class BEVFormerLayer(nn.Module):
         self.norm4 = nn.LayerNorm(256)
     
     def forward(self, bev_query, key, value, **kwargs):
-        out = bev_query
-        out = self.temporal_attn(out, kwargs['prev_bev'], kwargs['prev_bev'], **kwargs)
-        out = self.norm1(out)
-        out = self.spatial_attn(out, key, value, **kwargs)
+        """
+        bev_query : (B, L_bev, 256)
+        key/value : (N_cam, HW_tot, B, 256)   ← encoder 에서 그대로 넘어옴
+        """
+        prev_bev = kwargs['prev_bev']             # (len_bev, B, C)
+
+        out = self.temporal_attn(
+            bev_query,
+            prev_bev, prev_bev,   # queue = [prev, curr]
+            **kwargs)
+        out = self.norm1(out)                        # (B, L_bev, 256)
+        num_cam, hw_tot, B, C = key.shape            # N_cam, H*W, B, 256
+        key_flat   = key.permute(2, 0, 1, 3)         # (B, N_cam, HW_tot, C)
+        value_flat = value.permute(2, 0, 1, 3)
+        key_flat   = key_flat.reshape(  B * num_cam, hw_tot, C)  # (B·Nc, HW_tot, C)
+        value_flat = value_flat.reshape(B * num_cam, hw_tot, C)
+        out = self.spatial_attn(
+            out,               # query   : (B, L_bev, 256)
+            key_flat,          # key     : (B·Nc, HW_tot, 256)
+            value_flat,        # value   : (B·Nc, HW_tot, 256)
+            **kwargs)
         out = self.norm2(out)
         out = self.ffn(out)
         out = self.norm3(out)

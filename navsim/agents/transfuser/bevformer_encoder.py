@@ -134,6 +134,7 @@ class BEVFormerEncoder(nn.Module):
         각 layer에 전달하여 최종 BEV representation을 얻습니다.
         """
         assert lidar2img is not None and img_shape is not None
+        # print(bev_query.shape)
         output = bev_query
         intermediate = []
 
@@ -159,17 +160,18 @@ class BEVFormerEncoder(nn.Module):
 
         # (num_query, bs, embed_dims) -> (bs, num_query, embed_dims)
         bev_query = bev_query.permute(1, 0, 2)
+        # print(bev_query.shape)
         bev_pos = bev_pos.permute(1, 0, 2)
         bs, len_bev, _ = bev_query.shape
         num_bev_level = ref_2d.shape[2]
 
         if prev_bev is not None:
-            prev_bev = prev_bev.permute(1, 0, 2)
-            bev_query = torch.stack([prev_bev, bev_query], 1).reshape(bs * 2, len_bev, -1)
+            prev_bev = torch.stack(
+                [prev_bev, bev_query], 1).reshape(bs*2, len_bev, -1)
             hybird_ref_2d = torch.stack([shift_ref_2d, ref_2d], 1).reshape(bs * 2, len_bev, num_bev_level, 2)
         else:
             hybird_ref_2d = torch.stack([ref_2d, ref_2d], 1).reshape(bs * 2, len_bev, num_bev_level, 2)
-
+        # print(bev_query.shape)
         for layer in self.layers:
             output = layer(
                 bev_query,

@@ -180,12 +180,13 @@ class BEVFormerV2(nn.Module):
             img_shape=(H_img, W_img)
         )  # (num_q,B,dim)
         self.prev_bev = enc_out.detach()
-
+        
         # 6) BEV map + Top‑Down FPN
         bev_map = enc_out.permute(1, 2, 0).reshape(
             B, self.dim, self.bev_pos.shape[2], self.bev_pos.shape[3])
-        p5 = self.td_conv1(bev_map)
-        p4 = self.relu(self.td_conv2(self.up(p5)))
-        p3 = self.relu(self.td_conv3(self.up(p4)))              # semantic 64‑ch
+        p5 = self.td_conv1(bev_map)                               # 256 → 64
+        p4 = self.relu(self.td_conv2(self.td_upsample(p5)))        # 2× up
+        p3 = self.relu(self.td_conv3(self.td_upsample2(p4)))       # 2× up
 
-        return p3, bev_map, None
+        bev_feature_upscale = p3                                   # (B, 64, H·4, W·4)
+        return bev_feature_upscale, bev_map, None
