@@ -87,7 +87,7 @@ class TransfuserAgent(AbstractAgent):
         # print("cam.sensor2lidar_translation.shape:", t.shape)
         K = features.pop("camera_K")
         camera_feat = features.pop("camera_feature")
-        lidar_feat  = features.get("lidar_feature", None)
+        lidar_feat  = features.pop("lidar_feature", None)
         # TransfuserModel.forward 시 R,t,K 함께 넘기도록 시그니처 수정
         return self._transfuser_model(camera_feat, lidar_feat, R, t, K, **features)
 
