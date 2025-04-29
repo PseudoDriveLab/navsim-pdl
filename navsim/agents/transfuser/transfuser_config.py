@@ -12,15 +12,15 @@ class TransfuserConfig:
     """Global TransFuser config."""
 
     # image_architecture: str = "resnet50"
-    image_architecture: str = "resnet18"
+    image_architecture: str = "resnet50"
     lidar_architecture: str = "resnet34"
-    pc_range: List[float] = field(default_factory=lambda: [-50, -50, -5, 50, 50, 3])
+    pc_range: List[float] = field(default_factory=lambda: [-32.0, -32.0, -3.0,  32.0, 32.0, 3.0])
     num_points_in_pillar = 4
     latent: bool = False
     latent_rad_thresh: float = 4 * np.pi / 9
 
     max_height_lidar: float = 100.0
-    pixels_per_meter: float = 4.0
+    pixels_per_meter: float = 2.0
     hist_max_per_pixel: int = 5
 
     lidar_min_x: float = -32
@@ -38,8 +38,8 @@ class TransfuserConfig:
     # camera_height: int = 256
     lidar_resolution_width = 256
     lidar_resolution_height = 256
-    bev_grid_h: int = lidar_resolution_height // 8   # 예: 256/8 = 32
-    bev_grid_w: int = lidar_resolution_width  // 8   # 예: 256/8 = 32
+    bev_grid_h: int = int((lidar_max_y - lidar_min_y) * pixels_per_meter)  # 128
+    bev_grid_w: int = int((lidar_max_x - lidar_min_x) * pixels_per_meter)  # 128
     img_vert_anchors: int = 256 // 32
     img_horz_anchors: int = 1024 // 32
     lidar_vert_anchors: int = 256 // 32
@@ -70,22 +70,16 @@ class TransfuserConfig:
 
     # Transformer
 
-    # _dim_: int = 256
-    _dim_: int = 192
-    # tf_d_model: int = 256
-    # tf_d_ffn: int = 512
-    # tf_num_layers: int = 6
-    # tf_num_head: int = 8
+    _dim_: int = 256
+    tf_d_model: int = 256
+    tf_d_ffn: int = 512
+    tf_num_layers: int = 6
+    tf_num_head: int = 8
     tf_dropout: float = 0.1
 
-    tf_num_layers: int = 4        # 6 → 4
-    tf_d_model: int = 192      # 256 → 192
-    tf_d_ffn: int = 384      # 512 → 384
-    tf_num_head: int = 6      # 8  → 6  (d_model % head == 0)
-
     deformable_attention: Dict[str, Any] = field(default_factory=lambda: {
-        # 'embed_dims': 256,
-        'embed_dims': 192,
+        'embed_dims': 256,
+        # 'embed_dims': 192,
         'num_levels': 4,
         'num_points': 8,
         'im2col_step': 64,
@@ -130,9 +124,9 @@ class TransfuserConfig:
         6: ("box", [TrackedObjectType.PEDESTRIAN]),  # pedestrians
     }
 
-    bev_pixel_width: int = lidar_resolution_width
-    bev_pixel_height: int = lidar_resolution_height // 2
-    bev_pixel_size: float = 0.25
+    bev_pixel_width  = int((32 - (-32)) * pixels_per_meter)  # 64*2 = 128
+    bev_pixel_height = bev_pixel_width
+    bev_pixel_size: float = 1.0 / pixels_per_meter  # 0.5
 
     num_bev_classes = 7
     bev_features_channels: int = 64
@@ -142,7 +136,7 @@ class TransfuserConfig:
 
     @property
     def bev_semantic_frame(self) -> Tuple[int, int]:
-        return (self.bev_pixel_height, self.bev_pixel_width)
+        return (self.bev_grid_h, self.bev_grid_w)
 
     @property
     def bev_radius(self) -> float:

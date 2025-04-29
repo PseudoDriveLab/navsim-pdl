@@ -41,8 +41,8 @@ class TransfuserModel(nn.Module):
 
         # usually, the BEV features are variable in size.
         self._bev_downscale = nn.Conv2d(
-            in_channels=config._dim_,          # ← 512 → 256 로 변경
-            out_channels=config.tf_d_model,    # 256
+            in_channels=config._dim_,         
+            out_channels=config.tf_d_model,   
             kernel_size=1
         )
         self._status_encoding = nn.Linear(4 + 2 + 2, config.tf_d_model)
@@ -67,8 +67,8 @@ class TransfuserModel(nn.Module):
             ),
             nn.Upsample(
                 size=(
-                    config.lidar_resolution_height // 2,
-                    config.lidar_resolution_width,
+                    config.bev_grid_h,
+                    config.bev_grid_w
                 ),
                 mode="bilinear",
                 align_corners=False,

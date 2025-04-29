@@ -31,11 +31,6 @@ class TransfuserFeatureBuilder(AbstractFeatureBuilder):
         :param config: global config dataclass of TransFuser
         """
         self._config = config
-        self.crop_top, self.crop_bottom = 28, 28
-        self.crop_left, self.crop_right = 416, 416
-        # 최종 리사이즈 해상도
-        self.out_h, self.out_w = 256, 1024
-        # 사용할 카메라 순서
         self.cam_keys = [
             "cam_l0", "cam_l1", "cam_l2",
             "cam_f0",
@@ -86,22 +81,28 @@ class TransfuserFeatureBuilder(AbstractFeatureBuilder):
             img = torch.from_numpy(cam.image).permute(2,0,1).float() / 255.0    # (3,1080,1920)
 
             # 1/4 크기로 리사이즈
-            h, w = h0 // 4, w0 // 4
-            img = F.interpolate(img.unsqueeze(0), size=(h,w), mode='bilinear', align_corners=False)
-            img = img.squeeze(0)
-            imgs.append(img)
+            img_half = F.interpolate(img.unsqueeze(0), scale_factor=0.25,
+                             mode='area').squeeze(0)
+            # p?rint(img_half.shape)
+            # intrinsics 스케일링
+            K = torch.from_numpy(cam.intrinsics).float()
+            s = 0.25
+            K[0, :] *= s
+            K[1, :] *= s
+
+            imgs.append(img_half)
 
             # 원본 K → scale
-            K = torch.from_numpy(cam.intrinsics).float()  # (3,3)
-            scale_mat = torch.diag(torch.tensor([w/w0, h/h0, 1.], dtype=torch.float32))
-            K_scaled = scale_mat @ K @ torch.inverse(scale_mat)  # 또는 간단히:
+            # K = torch.from_numpy(cam.intrinsics).float()  # (3,3)
+            # scale_mat = torch.diag(torch.tensor([w/w0, h/h0, 1.], dtype=torch.float32))
+            # K_scaled = scale_mat @ K @ torch.inverse(scale_mat)  # 또는 간단히:
             # K_scaled[0, :] *= (w / w0)
             # K_scaled[1, :] *= (h / h0)
 
             Rs.append(torch.from_numpy(cam.sensor2lidar_rotation).float())
             ts.append(torch.from_numpy(cam.sensor2lidar_translation).float())
             # print("cam.sensor2lidar_translation.shape:", cam.sensor2lidar_translation.shape)
-            Ks.append(K_scaled)
+            Ks.append(K)
 
         features["camera_feature"] = torch.stack(imgs, dim=0)  # (8, 3, h, w)
         features["sensor2lidar_R"] = torch.stack(Rs, dim=0)
@@ -406,18 +407,34 @@ class TransfuserTargetBuilder(AbstractTargetBuilder):
 
         return rotated_geometry
 
-    def _coords_to_pixel(self, coords):
-        """
-        Transform local coordinates in pixel indices of BEV map
-        :param coords: _description_
-        :return: _description_
-        """
+    # def _coords_to_pixel(self, coords):
+    #     """
+    #     Transform local coordinates in pixel indices of BEV map
+    #     :param coords: _description_
+    #     :return: _description_
+    #     """
 
-        # NOTE: remove half in backward direction
-        pixel_center = np.array([[0, self._config.bev_pixel_width / 2.0]])
-        coords_idcs = (coords / self._config.bev_pixel_size) + pixel_center
+    #     # NOTE: remove half in backward direction
+    #     pixel_center = np.array([[0, self._config.bev_pixel_width / 2.0]])
+    #     coords_idcs = (coords / self._config.bev_pixel_size) + pixel_center
 
-        return coords_idcs.astype(np.int32)
+    #     return coords_idcs.astype(np.int32)
+    def _coords_to_pixel(self, coords: np.ndarray) -> np.ndarray:
+        # 설정 불러오기
+        x_min, y_min = self._config.pc_range[0], self._config.pc_range[1]
+        px_size    = self._config.bev_pixel_size     # meter per pixel
+        H, W       = self._config.bev_semantic_frame # (rows, cols)
+
+        # 1) meter → pixel (0..W-1, 0..H-1)
+        x_pix = (coords[..., 0] - x_min) / px_size
+        y_pix = (coords[..., 1] - y_min) / px_size
+
+        # 2) OpenCV 이미지 좌표계: (row, col), 상단이 y_max
+        col = np.round(x_pix).astype(np.int32)              # 0..W-1
+        row = np.round((H - 1) - y_pix).astype(np.int32)    # 위쪽이 0이 되도록 뒤집기
+
+        # 3) (N, 2) 형태로 합치기: [col, row]
+        return np.stack([col, row], axis=-1)
 
 
 class BoundingBox2DIndex(IntEnum):
