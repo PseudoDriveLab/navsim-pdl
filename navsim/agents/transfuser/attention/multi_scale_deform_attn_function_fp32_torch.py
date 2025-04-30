@@ -46,6 +46,9 @@ class MultiScaleDeformAttnFunction_fp32_torch(nn.Module):
             sampling_loc = sampling_loc.permute(0, 2, 1, 3, 4)
             # (N, num_query, num_points, 2)
             grid = sampling_loc.reshape(N, num_query, num_points, 2)
+            # print(f"[MSDeform] (lvl={lvl}) raw grid   min={grid.min():.4f}, max={grid.max():.4f}")
+            grid = grid * 2.0 - 1.0
+            # print(f"[MSDeform] (lvl={lvl}) remapped grid min={grid.min():.4f}, max={grid.max():.4f}")
 
             # grid_sample expects (N, C, H, W) and grid (N, H_out, W_out, 2)
             sampled = F.grid_sample(

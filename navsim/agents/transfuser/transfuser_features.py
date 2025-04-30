@@ -421,14 +421,15 @@ class TransfuserTargetBuilder(AbstractTargetBuilder):
     #     return coords_idcs.astype(np.int32)
     def _coords_to_pixel(self, coords: np.ndarray) -> np.ndarray:
         # 설정 불러오기
+        
         x_min, y_min = self._config.pc_range[0], self._config.pc_range[1]
         px_size    = self._config.bev_pixel_size     # meter per pixel
         H, W       = self._config.bev_semantic_frame # (rows, cols)
-
+        # print(f"[DEBUG] _coords_to_pixel HxW=({H},{W}), pixel_size={px_size}")
         # 1) meter → pixel (0..W-1, 0..H-1)
         x_pix = (coords[..., 0] - x_min) / px_size
         y_pix = (coords[..., 1] - y_min) / px_size
-
+        # print(f"[DEBUG] coords range → x_pix min={x_pix.min()}, max={x_pix.max()} / y_pix min={y_pix.min()}, max={y_pix.max()}")
         # 2) OpenCV 이미지 좌표계: (row, col), 상단이 y_max
         col = np.round(x_pix).astype(np.int32)              # 0..W-1
         row = np.round((H - 1) - y_pix).astype(np.int32)    # 위쪽이 0이 되도록 뒤집기

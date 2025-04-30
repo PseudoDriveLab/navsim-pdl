@@ -62,6 +62,13 @@ def _agent_loss(targets: Dict[str, torch.Tensor], predictions: Dict[str, torch.T
     l1_cost = _get_l1_cost(gt_states, pred_states, gt_valid)
 
     cost = config.agent_class_weight * ce_cost + config.agent_box_weight * l1_cost
+    for b in range(cost.shape[0]):
+        c = cost[b]
+        if not torch.isfinite(c).all():
+            print(f"[DEBUG] batch {b} cost has non-finite entries!")
+            print("  ce_cost range:", ce_cost[b].min().item(), ce_cost[b].max().item())
+            print("  l1_cost range:", l1_cost[b].min().item(), l1_cost[b].max().item())
+            print("  cost sample:", c[0, :5])     # 앞쪽 5개 예측값만 확인
     cost = cost.cpu()
 
     indices = [linear_sum_assignment(c) for i, c in enumerate(cost)]

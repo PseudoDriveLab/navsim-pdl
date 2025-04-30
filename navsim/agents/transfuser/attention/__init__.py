@@ -3,5 +3,6 @@ from .multi_scale_deform_attn_function_fp32_torch import MultiScaleDeformAttnFun
 from .ms_deformable_attention3d_torch import MSDeformableAttention3D
 from .group_multi_head_attention import GroupMultiheadAttention
 from .temporal_self_attention_torch import TemporalSelfAttention
+from .spatial_cross_attention import SpatialCrossAttention
 
-__all__ = ["CustomMSDeformableAttention", "MultiScaleDeformAttnFunction_fp32_torch", "MSDeformableAttention3D", "GroupMultiheadAttention", "TemporalSelfAttention"]
+__all__ = ["CustomMSDeformableAttention", "MultiScaleDeformAttnFunction_fp32_torch", "MSDeformableAttention3D", "GroupMultiheadAttention", "TemporalSelfAttention", "SpatialCrossAttention"]

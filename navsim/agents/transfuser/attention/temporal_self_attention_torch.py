@@ -1,112 +1,132 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
 from .multi_scale_deform_attn_function_fp32_torch import MultiScaleDeformAttnFunction_fp32_torch
 
 class TemporalSelfAttention(nn.Module):
-    def __init__(self, embed_dims=256, num_heads=8, num_levels=4, num_points=4,
-                 num_bev_queue=2, im2col_step=64, dropout=0.1):
-        super(TemporalSelfAttention, self).__init__()
-        if embed_dims % num_heads != 0:
-            raise ValueError("embed_dims must be divisible by num_heads")
-        self.embed_dims = embed_dims
-        self.num_heads = num_heads
-        self.num_levels = num_levels
-        self.num_points = num_points
-        self.num_bev_queue = num_bev_queue
-        self.im2col_step = im2col_step
-        self.dropout = nn.Dropout(dropout)
-        self.ms_deform_attn = MultiScaleDeformAttnFunction_fp32_torch(im2col_step)
-        self.sampling_offsets = nn.Linear(embed_dims*num_bev_queue,
-                                          num_bev_queue*num_heads*num_levels*num_points*2)
-        self.attention_weights = nn.Linear(embed_dims*num_bev_queue,
-                                           num_bev_queue*num_heads*num_levels*num_points)
-        self.value_proj = nn.Linear(embed_dims, embed_dims)
-        self.output_proj = nn.Linear(embed_dims, embed_dims)
-        self._init_weights()
-    
-    def _init_weights(self):
-        nn.init.constant_(self.sampling_offsets.weight, 0.)
-        thetas = torch.arange(self.num_heads, dtype=torch.float32) * (2*math.pi / self.num_heads)
-        grid_init = torch.stack([thetas.cos(), thetas.sin()], dim=-1)
-        grid_init = grid_init / grid_init.abs().max(dim=-1, keepdim=True)[0]
-        grid_init = grid_init.view(self.num_heads, 1, 1, 2).repeat(1, self.num_levels*self.num_bev_queue, self.num_points, 1)
-        for i in range(self.num_points):
-            grid_init[:, :, i, :] *= (i+1)
-        self.sampling_offsets.bias.data = grid_init.view(-1)
-        nn.init.constant_(self.attention_weights.weight, 0.)
-        nn.init.constant_(self.attention_weights.bias, 0.)
-        nn.init.xavier_uniform_(self.value_proj.weight)
-        nn.init.constant_(self.value_proj.bias, 0.)
-        nn.init.xavier_uniform_(self.output_proj.weight)
-        nn.init.constant_(self.output_proj.bias, 0.)
-    
-    def forward(self,
-                query,
-                key=None,
-                value=None,
-                identity=None,
-                query_pos=None,
-                key_padding_mask=None,
-                reference_points=None,
-                spatial_shapes=None,
-                level_start_index=None,
-                flag='decoder',
-                **kwargs):
-        if value is None:
-            bs, len_bev, c = query.shape
-            value = torch.stack([query, query], 1).reshape(bs*2, len_bev, c)
-        if identity is None:
-            identity = query
-        if query_pos is not None:
-            query = query + query_pos
+    def __init__(
+        self,
+        embed_dims: int = 256,
+        num_heads: int = 8,
+        num_levels: int = 1,
+        num_points: int = 4,
+        num_bev_queue: int = 2,
+        im2col_step: int = 64,
+        dropout: float = 0.1
+    ):
+        super().__init__()
+        assert embed_dims % num_heads == 0
 
-        bs, num_query, _ = query.shape
-        _, num_value, _ = value.shape
-        # print('query shape: ', query.shape)
-        # print('value shape: ', value.shape)
-        # print(spatial_shapes.shape)
-        # print((spatial_shapes[:,0] * spatial_shapes[:,1]).sum())
-        spatial_shapes=torch.tensor([[kwargs['bev_h'], kwargs['bev_w']]], device=query.device)
-        assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == num_value
+        self.embed_dims    = embed_dims
+        self.num_heads     = num_heads
+        self.num_levels    = num_levels
+        self.num_points    = num_points
+        self.num_bev_queue = num_bev_queue
+
+        # offset / weight 레이어
+        self.sampling_offsets = nn.Linear(
+            embed_dims * num_bev_queue,
+            num_bev_queue * num_heads * num_levels * num_points * 2
+        )
+        self.attention_weights = nn.Linear(
+            embed_dims * num_bev_queue,
+            num_bev_queue * num_heads * num_levels * num_points
+        )
+        self.value_proj  = nn.Linear(embed_dims, embed_dims)
+        self.output_proj = nn.Linear(embed_dims, embed_dims)
+        self.dropout     = nn.Dropout(dropout)
+        self.ms_deform_attn = MultiScaleDeformAttnFunction_fp32_torch(im2col_step)
+
+        # 초기화
+        nn.init.constant_(self.sampling_offsets.weight, 0.0)
+        nn.init.constant_(self.attention_weights.weight, 0.0)
+        nn.init.xavier_uniform_(self.value_proj.weight)
+        nn.init.xavier_uniform_(self.output_proj.weight)
+
+    def forward(
+        self,
+        query: torch.Tensor,               # (B, Q, C)
+        reference_points: torch.Tensor,    # (B, Q, Lv, 2 or 4)
+        spatial_shapes: torch.Tensor,      # (Lv, 2)
+        level_start_index: torch.Tensor,   # (Lv,)
+        bev_h: int,
+        bev_w: int
+    ) -> torch.Tensor:
+        B, Q, C = query.shape
+
+        # 1) history+current 결합 ▶ (B·queue, Q, C)
+        value = query.unsqueeze(1).repeat(1, self.num_bev_queue, 1, 1)\
+                     .view(B * self.num_bev_queue, Q, C)
+        value_proj = self.value_proj(value)  # (B·queue, Q, C)
+
+        # 2) residual
+        identity = query
+
+        # 3) offset/weight 추출을 위한 cat ▶ (B, Q, C·queue)
+        cat = torch.cat([
+            value_proj.view(B, self.num_bev_queue, Q, C)[:, 0],  # history
+            query                                               # current
+        ], dim=-1)
         
-        combined = torch.cat([value[:bs], query], dim=-1)
-        
-        value = self.value_proj(value)
-        sampling_offsets = self.sampling_offsets(combined)
-        attention_weights = self.attention_weights(combined)
+        sampling_offsets = self.sampling_offsets(cat).view(
+            B, Q, self.num_heads, self.num_bev_queue,
+            self.num_levels, self.num_points, 2
+        )
+        attention_weights = self.attention_weights(cat).view(
+            B, Q, self.num_heads, self.num_bev_queue,
+            self.num_levels, self.num_points
+        )
         attention_weights = F.softmax(attention_weights, dim=-1)
 
-        # queue 차원 포함
-        sampling_offsets = sampling_offsets.view(
-            bs, num_query, self.num_heads, self.num_bev_queue,
-            self.num_levels, self.num_points, 2)            # (bs,q,h,Q,Lv,P,2)
+        # 4) sampling_locations 계산
+        if reference_points.shape[-1] == 2:
+            # restore original global BEV normalization
+            # normalizer: (1,1,1,1,1,2) → [bev_w, bev_h]
+            normalizer = torch.tensor([bev_w, bev_h], device=query.device) \
+                .view(1,1,1,1,1,2)
+            # ref: (B, Q, 1, 1, Lv, 1, 2)
+            ref = reference_points.unsqueeze(2).unsqueeze(3).unsqueeze(5)
+            
+            sampling_locations = ref + sampling_offsets / normalizer
 
-        attention_weights = attention_weights.view(
-            bs, num_query, self.num_heads, self.num_bev_queue,
-            self.num_levels, self.num_points)               # (bs,q,h,Q,Lv,P)
+            # 3) 각 레벨별 분모로 나눠 줘서 sampling_locations 계산
+            sampling_locations = ref + sampling_offsets / normalizer
+            # print(f"[TSA] sampling_offsets  min={sampling_offsets.min():.4f}, max={sampling_offsets.max():.4f}")
+            # print(f"[TSA] level_norm         {spatial_shapes.tolist()}")
+            # print(f"[TSA] level_norm         {normalizer.shape}")
+            # print(f"[TSA] sampling_locations min={sampling_locations.min():.4f}, max={sampling_locations.max():.4f}")
+        else:
+            offset_norm = spatial_shapes[:, None].unsqueeze(0).unsqueeze(0).unsqueeze(0)  # (1,1,1,Lv,1,2)
+            sampling_offsets = sampling_offsets / offset_norm
+            sampling_locations = reference_points[..., None, None, :2] + sampling_offsets
 
-        # deform-attn 으로 넘길 때 (bs*Q, …) 형태로 펼치기
-        sampling_offsets = sampling_offsets.permute(0, 3, 1, 2, 4, 5, 6)\
-                                        .reshape(bs*self.num_bev_queue, num_query,
-                                                    self.num_heads, self.num_levels,
-                                                    self.num_points, 2)
-
-        attention_weights = attention_weights.permute(0, 3, 1, 2, 4, 5)\
-                                            .reshape(bs*self.num_bev_queue, num_query,
-                                                    self.num_heads, self.num_levels,
-                                                    self.num_points)
-
-        output = self.ms_deform_attn(
-            value,
-            spatial_shapes,
-            level_start_index,
-            sampling_offsets,
-            attention_weights
+            # print(f"[TSA] sampling_offsets  min={sampling_offsets.min():.4f}, max={sampling_offsets.max():.4f}")
+            # print(f"[TSA] offset_norm        {spatial_shapes.tolist()}")
+            # print(f"[TSA] sampling_locations min={sampling_locations.min():.4f}, max={sampling_locations.max():.4f}")
+        # 5) (B, Q, H, queue, Lv, P, 2) → (B·queue, Q, H, Lv, P, 2)
+        Bq, Qq, H, Qp, Lv, P, _ = sampling_locations.shape
+        sampling_locations = (
+            sampling_locations
+            .permute(0, 3, 1, 2, 4, 5, 6)    # (B, queue, Q, H, Lv, P, 2)
+            .reshape(B * self.num_bev_queue, Q, H, Lv, P, 2)
         )
-        # --- queue → batch 축소 ---
-        output = output.view(self.num_bev_queue, bs, num_query, self.embed_dims).mean(0)
+        attention_weights = (
+            attention_weights
+            .permute(0, 3, 1, 2, 4, 5)        # (B, queue, Q, H, Lv, P)
+            .reshape(B * self.num_bev_queue, Q, H, Lv, P)
+        )
+        bev_shape = torch.tensor([[bev_h, bev_w]], device=query.device, dtype=torch.long)      # (1,2)
+        bev_index = torch.tensor([0], device=query.device, dtype=torch.long)  
+        # 6) deformable attention
+        out = self.ms_deform_attn(
+            value_proj,           # (B·queue, Q, C)
+            bev_shape,       # (Lv, 2)
+            bev_index,    # (Lv,)
+            sampling_locations,   # (B·queue, Q, H, Lv, P, 2)
+            attention_weights     # (B·queue, Q, H, Lv, P)
+        )
 
-        output = self.output_proj(output)
-        return self.dropout(output) + identity
+        # 7) queue 평균 + projection + residual
+        out = out.view(self.num_bev_queue, B, Q, C).mean(0)  # (B, Q, C)
+        out = self.output_proj(out)
+        return self.dropout(out) + identity

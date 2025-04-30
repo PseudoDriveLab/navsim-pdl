@@ -134,7 +134,7 @@ def main(cfg: DictConfig) -> None:
         train_data, val_data = build_datasets(cfg, agent)
 
     logger.info("Building Datasets")
-    train_dataloader = DataLoader(train_data, **cfg.dataloader.params, shuffle=True)
+    train_dataloader = DataLoader(train_data, **cfg.dataloader.params, shuffle=False)
     logger.info("Num training samples: %d", len(train_data))
     val_dataloader = DataLoader(val_data, **cfg.dataloader.params, shuffle=False)
     logger.info("Num validation samples: %d", len(val_data))
@@ -147,6 +147,7 @@ def main(cfg: DictConfig) -> None:
         model=lightning_module,
         train_dataloaders=train_dataloader,
         val_dataloaders=val_dataloader,
+        # ckpt_path='/home/iclab/minseo/navsim/exp/training_transfuser_agent/2025.04.30.18.22.10/lightning_logs/version_0/checkpoints/epoch_827-step_8960.ckpt'
     )
 
 

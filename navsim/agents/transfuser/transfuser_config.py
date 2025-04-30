@@ -87,7 +87,7 @@ class TransfuserConfig:
         'batch_first': False
     })
 
-    _num_mono_levels_ = 5
+    _num_mono_levels_ = 4
 
      # deformable attention 내부 config
     num_cams: int = 4
@@ -101,7 +101,7 @@ class TransfuserConfig:
     trajectory_weight: float = 10.0
     agent_class_weight: float = 10.0
     agent_box_weight: float = 1.0
-    bev_semantic_weight: float = 10.0
+    bev_semantic_weight: float = 100.0
 
     # BEV mapping
     bev_semantic_classes = {
