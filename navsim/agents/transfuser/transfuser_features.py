@@ -65,30 +65,31 @@ class TransfuserFeatureBuilder(AbstractFeatureBuilder):
         # ]
         
         cam_list = [
-            cams.cam_l0,
-            cams.cam_f0,
-            cams.cam_r0,
-            cams.cam_b0,
+            cams.cam_f0,     
+            cams.cam_l0,    
+            cams.cam_r0,    
         ]
-        # print("cam_list len:", len(cam_list))
+        
         imgs = []
         Rs  = []
         ts  = []
         Ks  = []
         for cam in cam_list:
-            # 원본 크기
-            h0, w0 = cam.image.shape[:2]                     # (1080, 1920)
+                           # (1080, 1920)
             img = torch.from_numpy(cam.image).permute(2,0,1).float() / 255.0    # (3,1080,1920)
-
-            # 1/4 크기로 리사이즈
-            img_half = F.interpolate(img.unsqueeze(0), scale_factor=0.25,
-                             mode='area').squeeze(0)
+            # 원본 크기
+            H0, W0 = img.shape[1], img.shape[2]
+            new_h, new_w = H0 // 4, W0 // 2
+            img_half = F.interpolate(
+                         img.unsqueeze(0),
+                         size=(new_h, new_w),
+                         mode='area',
+                       ).squeeze(0)
             # p?rint(img_half.shape)
             # intrinsics 스케일링
             K = torch.from_numpy(cam.intrinsics).float()
-            s = 0.25
-            K[0, :] *= s
-            K[1, :] *= s
+            K[0, :] *= (new_w / W0)
+            K[1, :] *= (new_h / H0)
 
             imgs.append(img_half)
 
@@ -432,7 +433,7 @@ class TransfuserTargetBuilder(AbstractTargetBuilder):
         # print(f"[DEBUG] coords range → x_pix min={x_pix.min()}, max={x_pix.max()} / y_pix min={y_pix.min()}, max={y_pix.max()}")
         # 2) OpenCV 이미지 좌표계: (row, col), 상단이 y_max
         col = np.round(x_pix).astype(np.int32)              # 0..W-1
-        row = np.round((H - 1) - y_pix).astype(np.int32)    # 위쪽이 0이 되도록 뒤집기
+        row = np.round(y_pix).astype(np.int32)
 
         # 3) (N, 2) 형태로 합치기: [col, row]
         return np.stack([col, row], axis=-1)

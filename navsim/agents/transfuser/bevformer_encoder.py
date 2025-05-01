@@ -111,12 +111,12 @@ class BEVFormerEncoder(nn.Module):
                  (uv[...,0:1]>0)&(uv[...,0:1]<1)&
                  (uv[...,1:2]>0)&(uv[...,1:2]<1))
         # point_sampling 안, uv와 valid를 만든 직후에 추가
-        num_uv_inf    = int(torch.isinf(uv).sum().item())
-        num_uv_nan    = int(torch.isnan(uv).sum().item())
-        total_uv      = int(uv.numel())
-        num_valid_pt  = int(valid.sum().item())
-        total_points  = int(valid.numel())
-        num_invalid_pt= total_points - num_valid_pt
+        # num_uv_inf    = int(torch.isinf(uv).sum().item())
+        # num_uv_nan    = int(torch.isnan(uv).sum().item())
+        # total_uv      = int(uv.numel())
+        # num_valid_pt  = int(valid.sum().item())
+        # total_points  = int(valid.numel())
+        # num_invalid_pt= total_points - num_valid_pt
 
         # print(f"[DBG point_sampling] uv inf={num_uv_inf}, nan={num_uv_nan}, total={total_uv}")
         # print(f"[DBG point_sampling] valid pts={num_valid_pt}, invalid pts={num_invalid_pt}, grid pts={total_points}")

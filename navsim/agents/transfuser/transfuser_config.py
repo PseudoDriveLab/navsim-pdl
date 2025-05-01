@@ -12,15 +12,15 @@ class TransfuserConfig:
     """Global TransFuser config."""
 
     # image_architecture: str = "resnet50"
-    image_architecture: str = "resnet50"
+    image_architecture: str = "resnet18"
     lidar_architecture: str = "resnet34"
-    pc_range: List[float] = field(default_factory=lambda: [-32.0, -32.0, -3.0,  32.0, 32.0, 3.0])
+    pc_range: List[float] = field(default_factory=lambda: [-32.0, -0.0, -3.0,  32.0, 32.0, 3.0])
     num_points_in_pillar = 4
     latent: bool = False
     latent_rad_thresh: float = 4 * np.pi / 9
 
     max_height_lidar: float = 100.0
-    pixels_per_meter: float = 2.0
+    pixels_per_meter: float = 4
     hist_max_per_pixel: int = 5
 
     lidar_min_x: float = -32
@@ -39,7 +39,7 @@ class TransfuserConfig:
     lidar_resolution_width = 256
     lidar_resolution_height = 256
     bev_grid_h: int = int((lidar_max_y - lidar_min_y) * pixels_per_meter)  # 128
-    bev_grid_w: int = int((lidar_max_x - lidar_min_x) * pixels_per_meter)  # 128
+    bev_grid_w: int = int((lidar_max_x - lidar_min_x) * pixels_per_meter) // 2  # 128
     img_vert_anchors: int = 256 // 32
     img_horz_anchors: int = 1024 // 32
     lidar_vert_anchors: int = 256 // 32
@@ -73,24 +73,25 @@ class TransfuserConfig:
     _dim_: int = 256
     tf_d_model: int = 256
     tf_d_ffn: int = 512
-    tf_num_layers: int = 6
+    tf_num_layers: int = 1
     tf_num_head: int = 8
     tf_dropout: float = 0.1
 
     deformable_attention: Dict[str, Any] = field(default_factory=lambda: {
         'embed_dims': 256,
         # 'embed_dims': 192,
-        'num_levels': 4,
+        #needs to be same with _num_mono_levels_
+        'num_levels': 3,
         'num_points': 8,
         'im2col_step': 64,
         'dropout': 0.1,
         'batch_first': False
     })
 
-    _num_mono_levels_ = 4
+    _num_mono_levels_ = 3
 
      # deformable attention 내부 config
-    num_cams: int = 4
+    num_cams: int = 3
     num_bev_queue: int = 2
     return_intermediate: bool = False
 
@@ -101,7 +102,7 @@ class TransfuserConfig:
     trajectory_weight: float = 10.0
     agent_class_weight: float = 10.0
     agent_box_weight: float = 1.0
-    bev_semantic_weight: float = 100.0
+    bev_semantic_weight: float = 50.0
 
     # BEV mapping
     bev_semantic_classes = {
@@ -124,8 +125,8 @@ class TransfuserConfig:
         6: ("box", [TrackedObjectType.PEDESTRIAN]),  # pedestrians
     }
 
-    bev_pixel_width  = int((32 - (-32)) * pixels_per_meter)  # 64*2 = 128
-    bev_pixel_height = bev_pixel_width
+    bev_pixel_width  = int((32 - (-32)) * pixels_per_meter)
+    bev_pixel_height = bev_pixel_width // 2
     bev_pixel_size: float = 1.0 / pixels_per_meter  # 0.5
 
     num_bev_classes = 7

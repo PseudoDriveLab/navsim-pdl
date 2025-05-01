@@ -10,6 +10,7 @@ from navsim.agents.transfuser.transfuser_backbone import BEVFormerV2
 from navsim.agents.transfuser.transfuser_config import TransfuserConfig
 from navsim.agents.transfuser.transfuser_features import BoundingBox2DIndex
 from navsim.common.enums import StateSE2Index
+from .utility import get_sinusoidal_embedding
 
 
 class TransfuserModel(nn.Module):

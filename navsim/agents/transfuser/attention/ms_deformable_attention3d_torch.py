@@ -60,6 +60,8 @@ class MSDeformableAttention3D(nn.Module):
             query = query + query_pos
 
         bs, num_query, _ = query.shape
+        bs, num_value, _ = value.shape
+        assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == num_value
         value = self.value_proj(value)  # (bs, N, C)
 
         # 2) sampling_offsets, attention_weights reshape
@@ -71,16 +73,43 @@ class MSDeformableAttention3D(nn.Module):
     #   sampling_offsets.shape, sampling_offsets.dtype, sampling_offsets.device, 
     #   "min/max=", sampling_offsets.min().item(), sampling_offsets.max().item())
         
-        attention_weights = self.attention_weights(query).softmax(-1).view(
-            bs, num_query, self.num_heads, self.num_levels, self.num_points
-        )
+        attention_weights = self.attention_weights(query).view(
+            bs, num_query, self.num_heads, self.num_levels * self.num_points)
 
-        # 3) sampling_locations 계산
-        spatial_shapes_ = spatial_shapes[None, None, None, :, None, :].to(sampling_offsets.dtype)
-        sampling_locations = (
-            reference_points[:, :, None, :, None, :]  # (bs, nq, 1, nl, 1, 2)
-            + sampling_offsets / spatial_shapes_      # (bs, nq, nh, nl, np, 2)
-        )
+        attention_weights = attention_weights.softmax(-1)
+
+        attention_weights = attention_weights.view(bs, num_query,
+                                                   self.num_heads,
+                                                   self.num_levels,
+                                                   self.num_points)
+        
+        if reference_points.shape[-1] == 2:
+            # reference_points : (bs, nq, D, 2)  (D = num_Z_anchors)
+            bs, nq, D, _ = reference_points.shape        # Z-anchor 수
+            offset_norm = torch.stack([spatial_shapes[..., 1],
+                                       spatial_shapes[..., 0]], -1)  # (L,2)
+            bs, num_query, num_Z_anchors, xy = reference_points.shape
+            # (bs, nq, 1, 1, 1, D, 2)
+            ref = reference_points[:, :, None, None, None, :, :]
+
+            # sampling_offsets : (bs,nq,H,L,P,2) → 정규화 후
+            sampling_offsets = sampling_offsets / offset_norm[None, None, None, :, None, :]
+            # (bs,nq,H,L,P,D,2)
+            bs, num_query, num_heads, num_levels, num_all_points, xy = sampling_offsets.shape
+            sampling_offsets = sampling_offsets.view(
+                bs, num_query, num_heads, num_levels, num_all_points // num_Z_anchors, num_Z_anchors, xy)
+
+            # (bs,nq,H,L,P,D,2)
+            sampling_locations = ref + sampling_offsets
+            bs, num_query, num_heads, num_levels, num_points, num_Z_anchors, xy = sampling_locations.shape
+            assert num_all_points == num_points * num_Z_anchors
+            # flatten P*D 축
+            sampling_locations = sampling_locations.view(
+                bs, num_query, num_heads, num_levels, num_all_points, xy)  # -> (bs,nq,H,L,P*D,2)
+        else:
+            raise ValueError("reference_points 마지막 차원은 2여야 합니다.")
+
+        
         # print(">>> REF finite:", torch.isfinite(reference_points).all().item())
         # if not torch.isfinite(sampling_locations).all():
         #     print("  num_inf:", int(torch.isinf(reference_points).sum().item()),

@@ -7,35 +7,8 @@ from .fpn import FPN
 from .bev_encoder_layer import BEVFormerLayer
 from .bevformer_encoder import BEVFormerEncoder
 from navsim.agents.transfuser.transfuser_config import TransfuserConfig
+from .utility import get_sinusoidal_embedding, build_sine_bev_pos
 
-def build_sine_bev_pos(bev_h: int, bev_w: int, dim: int, device):
-    """
-    BEVFormer 원본 형태의 2D sin‑cos positional encoding
-    out: (1, dim, H, W)  –  gradient X (buffer)
-    """
-    assert dim % 4 == 0, "dim must be divisible by 4"
-    dim_quarter = dim // 4                          # 64 when dim=256
-
-    y_embed, x_embed = torch.meshgrid(
-        torch.arange(bev_h, device=device).float() + 0.5,
-        torch.arange(bev_w, device=device).float() + 0.5,
-        indexing="ij"
-    )                                               # (H, W)
-
-    inv_freq = 1.0 / (10000 ** (
-        torch.arange(dim_quarter, device=device).float() / dim_quarter
-    ))                                              # (64,)
-
-    pos_x = (x_embed.reshape(-1, 1) * inv_freq)     # (H*W, 64)
-    pos_y = (y_embed.reshape(-1, 1) * inv_freq)
-
-    emb = torch.cat((
-        pos_x.sin(), pos_x.cos(),                  # 2×64
-        pos_y.sin(), pos_y.cos()                   # 2×64
-    ), dim=1)                                      # (H*W, 256)
-
-    # (1, dim, H, W)
-    return emb.t().view(1, dim, bev_h, bev_w)
 
 class BEVFormerV2(nn.Module):
     """
@@ -50,11 +23,12 @@ class BEVFormerV2(nn.Module):
         self.num_points_in_pillar = cfg.num_points_in_pillar
         self.num_mono_levels = cfg._num_mono_levels_
         self.prev_bev = None
-        self.level_embeds = nn.Parameter(torch.randn(cfg._num_mono_levels_, self.dim))
-        self.cams_embeds  = nn.Parameter(torch.randn(cfg.num_cams, self.dim))
+        level_embeds = get_sinusoidal_embedding(cfg._num_mono_levels_, self.dim)
+        cams_embeds  = get_sinusoidal_embedding(cfg.num_cams, self.dim)
+        self.register_buffer('level_embeds', level_embeds, persistent=False)
+        self.register_buffer('cams_embeds',   cams_embeds,   persistent=False)
         bev_h = cfg.bev_grid_h   # 예) 30
         bev_w = cfg.bev_grid_w
-        print("BEV grid h×w:", cfg.bev_grid_h, "×", cfg.bev_grid_w)
         self.bev_queries = nn.Parameter(torch.zeros(bev_h * bev_w, self.dim))
         nn.init.xavier_uniform_(self.bev_queries)
         self.register_buffer('bev_pos',
@@ -141,7 +115,6 @@ class BEVFormerV2(nn.Module):
         mlvl_feats = [
             f.view(B, N_cam, -1, f.shape[-2], f.shape[-1]) for f in self.fpn(feats)
         ]  # list[(B,N_cam,dim,H,W)]
-        # print(f"[DEBUG] FPN outputs: {len(mlvl_feats)} levels, cfg._num_mono_levels_={self.num_mono_levels}")
         # for lvl, f in enumerate(mlvl_feats):
         #     print(f"[DEBUG]   level {lvl}: shape={tuple(f.shape)}")
 
@@ -232,8 +205,8 @@ class BEVFormerV2(nn.Module):
             bs, num_cam, c, h, w = feat.shape
             spatial_shape = (h, w)
             feat = feat.flatten(3).permute(1, 0, 3, 2)
-            feat = feat + self.cams_embeds[:, None, None, :].to(feat.dtype)
-            feat = feat + self.level_embeds[None, None, lvl:lvl + 1, :].to(feat.dtype)
+            feat = feat + self.cams_embeds[:, None, None, :].to(feat)
+            feat = feat + self.level_embeds[None, None, lvl:lvl + 1, :].to(feat)
             spatial_shapes.append(spatial_shape)
             feat_flatten.append(feat)
         

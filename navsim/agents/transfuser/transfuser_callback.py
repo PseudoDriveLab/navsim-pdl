@@ -79,7 +79,7 @@ class TransfuserCallback(pl.Callback):
         device = lightning_module.device
         for idx_plot in range(self._num_plots):
             features, targets = next(iter(trainer.train_dataloader))
-            desired_idx = 9
+            desired_idx = 0
 
             train_loader = trainer.train_dataloader  # 괄호 제거
             desired_batch = next(itertools.islice(train_loader, desired_idx, None))
