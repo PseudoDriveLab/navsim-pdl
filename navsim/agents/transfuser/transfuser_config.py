@@ -12,11 +12,11 @@ class TransfuserConfig:
     """Global TransFuser config."""
 
     # image_architecture: str = "resnet50"
-    image_architecture: str = "resnet50"
+    image_architecture: str = "resnet18"
     lidar_architecture: str = "resnet34"
     pc_range: List[float] = field(default_factory=lambda: [-32.0, -32.0, -3.0,  32.0, 32.0, 3.0])
     num_points_in_pillar = 4
-    latent: bool = False
+    latent: bool = True
     latent_rad_thresh: float = 4 * np.pi / 9
 
     max_height_lidar: float = 100.0
