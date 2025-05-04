@@ -81,9 +81,10 @@ class BEVFormerEncoder(nn.Module):
             reference_points_cam: (N_cam, bs, num_q, num_p, 2)
             bev_mask:             (N_cam, bs, num_q, num_p)
         """
+        
         bs, num_p, num_q, _ = reference_points.shape
         H_img, W_img = img_shape
-
+        
         # 1) normalized → real-world
         rp = reference_points.clone()
         rp[...,0] = rp[...,0]*(self.pc_range[3]-self.pc_range[0]) + self.pc_range[0]
@@ -109,8 +110,32 @@ class BEVFormerEncoder(nn.Module):
         valid = (mask &
                  (uv[...,0:1]>0)&(uv[...,0:1]<1)&
                  (uv[...,1:2]>0)&(uv[...,1:2]<1))
+        # point_sampling 안, uv와 valid를 만든 직후에 추가
+        # num_uv_inf    = int(torch.isinf(uv).sum().item())
+        # num_uv_nan    = int(torch.isnan(uv).sum().item())
+        # total_uv      = int(uv.numel())
+        # num_valid_pt  = int(valid.sum().item())
+        # total_points  = int(valid.numel())
+        # num_invalid_pt= total_points - num_valid_pt
 
-        # (N_cam, bs, num_q, num_p, 2)
+        # print(f"[DBG point_sampling] uv inf={num_uv_inf}, nan={num_uv_nan}, total={total_uv}")
+        # print(f"[DBG point_sampling] valid pts={num_valid_pt}, invalid pts={num_invalid_pt}, grid pts={total_points}")
+        # valid_cam    = valid.squeeze(-1).sum(dim=(0,2,3))  # (Nc,)  
+        # total_per_cam = bs * num_p * num_q
+        # for cam_id, cnt in enumerate(valid_cam):
+        #     ratio = cnt / total_per_cam * 100
+        #     print(f"[DBG point_sampling cam{cam_id}] valid_pts={int(cnt)}/{total_per_cam} ({ratio:.2f}%)")
+        # valid_any = valid.squeeze(-1).any(dim=1)    # (bs, num_p, num_q)
+        # total_bev = num_p * num_q
+        # covered   = valid_any.sum().item()
+        # coverage  = covered / total_bev * 100
+        # print(f"[DBG point_sampling union] covered_pts={covered}/{total_bev} ({coverage:.2f}%)")
+        uv = torch.where(
+            valid,                           # (bs, Nc, num_p, num_q, 1) → 마지막 차원 브로드캐스트됨
+            uv,                              # (bs, Nc, num_p, num_q, 2)
+            torch.full_like(uv, 0.5)         # (bs, Nc, num_p, num_q, 2)
+        )
+        
         reference_points_cam = uv.permute(1,0,3,2,4)
         bev_mask            = valid.squeeze(-1).permute(1,0,3,2)  # (N_cam,bs,num_q,num_p)
 
@@ -149,28 +174,37 @@ class BEVFormerEncoder(nn.Module):
             dim='3d', bs=bs, device=device, dtype=dtype)
         ref_2d = self.get_reference_points(
             bev_h, bev_w, dim='2d', bs=bs, device=device, dtype=dtype)
+        # print(f"[DEBUG] ref_3d range: min={ref_3d.min().item():.3f}, max={ref_3d.max().item():.3f}")
+        # print(f"[DEBUG] ref_2d range: min={ref_2d.min().item():.3f}, max={ref_2d.max().item():.3f}")
+
 
         reference_points_cam, bev_mask = self.point_sampling(ref_3d, lidar2img, img_shape)
 
-        # 원본에서 버그 재현을 위한 코드: shift_ref_2d는 복제 후 shift 적용
+        # 1) BEV temporal용 reference 2D: shift된 과 원본 ref2d 를 stack
         shift_ref_2d = ref_2d.clone()
         if not torch.is_tensor(shift):
             shift = torch.tensor(shift, device=device, dtype=dtype)
         shift_ref_2d += shift
 
-        # (num_query, bs, embed_dims) -> (bs, num_query, embed_dims)
+        # bev_query: (num_query, bs, C) → (bs, num_query, C)
         bev_query = bev_query.permute(1, 0, 2)
-        # print(bev_query.shape)
-        bev_pos = bev_pos.permute(1, 0, 2)
+        bev_pos   = bev_pos.permute(1, 0, 2)
         bs, len_bev, _ = bev_query.shape
         num_bev_level = ref_2d.shape[2]
 
+        # 2) prev_bev (history BEV) 가 있으면 (num_q,bs,C)→(bs,num_q,C) 변환
         if prev_bev is not None:
-            prev_bev = torch.stack(
-                [prev_bev, bev_query], 1).reshape(bs*2, len_bev, -1)
-            hybird_ref_2d = torch.stack([shift_ref_2d, ref_2d], 1).reshape(bs * 2, len_bev, num_bev_level, 2)
+            # prev_bev: (num_q, bs, C) → (bs, num_q, C)
+            prev_tf = prev_bev      
+            # history(shifted) + current(ref) stack → (bs*2, num_q, 2)
+            hybrid_ref2d = torch.stack([shift_ref_2d, ref_2d], dim=1).reshape(bs*2, len_bev, num_bev_level, 2)
+            # 기록해 두고 다음 프레임에 넘길 prev_bev
+            prev_bev = torch.stack([prev_tf, bev_query], dim=1).reshape(bs*2, len_bev, -1)
         else:
-            hybird_ref_2d = torch.stack([ref_2d, ref_2d], 1).reshape(bs * 2, len_bev, num_bev_level, 2)
+            # 첫 프레임엔 둘 다 원본 ref2d
+            hybrid_ref2d = torch.stack([ref_2d, ref_2d], dim=1).reshape(bs*2, len_bev, num_bev_level, 2)
+
+        # 3) 이제 각 layer 호출 시 hybrid_ref2d 와 prev_bev 를 넘겨줍니다
         # print(bev_query.shape)
         for layer in self.layers:
             output = layer(
@@ -179,7 +213,7 @@ class BEVFormerEncoder(nn.Module):
                 value,
                 bev_pos=bev_pos,
                 query_pos=bev_pos,
-                reference_points=hybird_ref_2d,       # temporal self‑attn용 2D ref
+                reference_points=hybrid_ref2d,       # temporal self‑attn용 2D ref
                 reference_points_cam=reference_points_cam,  # spatial cross‑attn용 3D ref
                 bev_mask=bev_mask,                    # spatial cross‑attn용 mask
                 bev_h=bev_h,

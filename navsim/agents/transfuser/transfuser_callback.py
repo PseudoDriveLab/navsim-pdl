@@ -7,6 +7,7 @@ import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
 import torchvision.utils as vutils
+import itertools
 from nuplan.common.actor_state.oriented_box import OrientedBox
 from nuplan.common.actor_state.state_representation import StateSE2
 from nuplan.common.maps.abstract_map import SemanticMapLayer
@@ -78,6 +79,12 @@ class TransfuserCallback(pl.Callback):
         device = lightning_module.device
         for idx_plot in range(self._num_plots):
             features, targets = next(iter(trainer.train_dataloader))
+            desired_idx = 0
+
+            train_loader = trainer.train_dataloader  # 괄호 제거
+            desired_batch = next(itertools.islice(train_loader, desired_idx, None))
+
+            features, targets = desired_batch
             features, targets = dict_to_device(features, device), dict_to_device(targets, device)
             with torch.no_grad():
                 predictions = lightning_module.agent.forward(features)
@@ -93,18 +100,25 @@ class TransfuserCallback(pl.Callback):
     
 
     def _visualize_model(self, features, targets, predictions):
-        cam = features["camera_feature"]                          # float32 [0..1]
+        import torch, cv2
+        import numpy as np
+        import torch.nn.functional as F
+        import torchvision.utils as vutils
+        from navsim.agents.transfuser.transfuser_callback import semantic_map_to_rgb, lidar_map_to_rgb
+
+        cam = features["camera_feature"]  # (B, N, 3, H, W)
         B, N, C, H, W = cam.shape
-        cam = cam.permute(0,1,3,4,2).reshape(B, N*H, W, C)        # (B, 4H, W, 3)
-        cam = cam.permute(0,3,1,2).contiguous()                   # (B,3,4H,W)
+
+        # 1) 수직 스택 -> 수평 스티칭으로 변경
+        #    (B,N,3,H,W) -> (B,H, N*W, 3)
+        cam = cam.permute(0,1,3,4,2)          # (B,N,H,W,3)
+        cam = cam.reshape(B, H, N*W, C)       # (B,H,4W,3)
+        cam = cam.permute(0,3,1,2).contiguous()  # (B,3,H,4W)
         cam = F.interpolate(cam, size=(256,1024), mode="bilinear", align_corners=False)
         cam_uint8 = (cam.clamp(0,1)*255).byte().permute(0,2,3,1).cpu().numpy()  # (B,256,1024,3)
 
-        # BEV GT / Pred (원래 128×256)
         bev_gt   = targets["bev_semantic_map"].cpu().numpy()      # (B,128,256)
         bev_pred = predictions["bev_semantic_map"].argmax(1).cpu().numpy()  # (B,128,256)
-
-        # LiDAR + Box
         lidar_map      = features["lidar_feature"].squeeze(1).cpu().numpy()  # (B,256,256)
         agent_labels   = targets["agent_labels"].cpu().numpy()
         agent_states   = targets["agent_states"].cpu().numpy()
@@ -114,24 +128,20 @@ class TransfuserCallback(pl.Callback):
         trajectory_p   = predictions["trajectory"].cpu().numpy()
 
         tiles = []
-        for i in range(self._num_rows * self._num_columns):
-            # 전체 타일 크기: 높이 256+256=512, 너비 1024+512=1536
+        num_tiles = self._num_rows * self._num_columns
+        for i in range(min(B, num_tiles)):
             tile = np.zeros((512, 1536, 3), dtype=np.uint8)
-
-            # ── ① 왼쪽 상단: 카메라 원본 ───────────────────────────
+            # ① 상단 전체: 4-View Camera
             tile[0:256, 0:1024] = cam_uint8[i]
-
-            # ── ② 왼쪽 하단: BEV GT (128→256↑, 256→512↑) ───────────
-            gt_rgb = semantic_map_to_rgb(bev_gt[i], self._config)    # (128,256,3)
+            # ② 왼쪽 하단: BEV GT
+            gt_rgb = semantic_map_to_rgb(bev_gt[i], self._config)
             gt_rgb = cv2.resize(gt_rgb, (512,256), interpolation=cv2.INTER_NEAREST)
             tile[256:512, 0:512] = gt_rgb
-
-            # ── ③ 중앙 하단: BEV Pred (128→256↑, 256→512↑) ──────────
+            # ③ 가운데 하단: BEV Pred
             pred_rgb = semantic_map_to_rgb(bev_pred[i], self._config)
             pred_rgb = cv2.resize(pred_rgb, (512,256), interpolation=cv2.INTER_NEAREST)
             tile[256:512, 512:1024] = pred_rgb
-
-            # ── ④ 오른쪽 전체: LiDAR + Box ────────────────────────
+            # ④ 오른쪽 전체: LiDAR + Box
             lidar_rgb = lidar_map_to_rgb(
                 lidar_map[i],
                 agent_states[i][agent_labels[i]],
@@ -139,15 +149,15 @@ class TransfuserCallback(pl.Callback):
                 trajectory_gt[i],
                 trajectory_p[i],
                 self._config
-            )  # 이 함수가 (256,256,3) 리턴한다고 가정
-            # LiDAR 맵도 256→512로 업샘플
+            )
             lidar_rgb = cv2.resize(lidar_rgb, (512,512), interpolation=cv2.INTER_NEAREST)
             tile[:, 1024:1536] = lidar_rgb
 
+            # (H,W,C) -> (C,H,W)
             tiles.append(torch.from_numpy(tile).permute(2,0,1))
 
-        # (C, H, W)xB → 그리드
-        return vutils.make_grid(tiles, nrow=self._num_rows, normalize=False)
+        return vutils.make_grid(tiles, nrow=self._num_columns, normalize=False)
+
 
 
 def dict_to_device(dict: Dict[str, torch.Tensor], device: Union[torch.device, str]) -> Dict[str, torch.Tensor]:

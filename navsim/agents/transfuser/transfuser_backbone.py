@@ -7,35 +7,8 @@ from .fpn import FPN
 from .bev_encoder_layer import BEVFormerLayer
 from .bevformer_encoder import BEVFormerEncoder
 from navsim.agents.transfuser.transfuser_config import TransfuserConfig
+from .utility import get_sinusoidal_embedding, build_sine_bev_pos
 
-def build_sine_bev_pos(bev_h: int, bev_w: int, dim: int, device):
-    """
-    BEVFormer 원본 형태의 2D sin‑cos positional encoding
-    out: (1, dim, H, W)  –  gradient X (buffer)
-    """
-    assert dim % 4 == 0, "dim must be divisible by 4"
-    dim_quarter = dim // 4                          # 64 when dim=256
-
-    y_embed, x_embed = torch.meshgrid(
-        torch.arange(bev_h, device=device).float() + 0.5,
-        torch.arange(bev_w, device=device).float() + 0.5,
-        indexing="ij"
-    )                                               # (H, W)
-
-    inv_freq = 1.0 / (10000 ** (
-        torch.arange(dim_quarter, device=device).float() / dim_quarter
-    ))                                              # (64,)
-
-    pos_x = (x_embed.reshape(-1, 1) * inv_freq)     # (H*W, 64)
-    pos_y = (y_embed.reshape(-1, 1) * inv_freq)
-
-    emb = torch.cat((
-        pos_x.sin(), pos_x.cos(),                  # 2×64
-        pos_y.sin(), pos_y.cos()                   # 2×64
-    ), dim=1)                                      # (H*W, 256)
-
-    # (1, dim, H, W)
-    return emb.t().view(1, dim, bev_h, bev_w)
 
 class BEVFormerV2(nn.Module):
     """
@@ -50,8 +23,10 @@ class BEVFormerV2(nn.Module):
         self.num_points_in_pillar = cfg.num_points_in_pillar
         self.num_mono_levels = cfg._num_mono_levels_
         self.prev_bev = None
-        self.level_embeds = nn.Parameter(torch.randn(cfg._num_mono_levels_, self.dim))
-        self.cams_embeds  = nn.Parameter(torch.randn(cfg.num_cams, self.dim))
+        level_embeds = get_sinusoidal_embedding(cfg._num_mono_levels_, self.dim)
+        cams_embeds  = get_sinusoidal_embedding(cfg.num_cams, self.dim)
+        self.register_buffer('level_embeds', level_embeds, persistent=False)
+        self.register_buffer('cams_embeds',   cams_embeds,   persistent=False)
         bev_h = cfg.bev_grid_h   # 예) 30
         bev_w = cfg.bev_grid_w
         self.bev_queries = nn.Parameter(torch.zeros(bev_h * bev_w, self.dim))
@@ -84,6 +59,9 @@ class BEVFormerV2(nn.Module):
             im2col_step=64,
             dropout=cfg.tf_dropout
         )
+        
+        self.debug = cfg.deformable_attention.copy()
+        
         spat_cfg = cfg.deformable_attention.copy()
         spat_cfg.pop('type', None)
         spat_cfg.update({
@@ -137,17 +115,88 @@ class BEVFormerV2(nn.Module):
         mlvl_feats = [
             f.view(B, N_cam, -1, f.shape[-2], f.shape[-1]) for f in self.fpn(feats)
         ]  # list[(B,N_cam,dim,H,W)]
+        # for lvl, f in enumerate(mlvl_feats):
+        #     print(f"[DEBUG]   level {lvl}: shape={tuple(f.shape)}")
 
         # 2) lidar2img
+        # B, Nc, _, H_feat, W_feat = camera_feature.shape
+        # print(f"[DBG] feature map 해상도: H_feat={H_feat}, W_feat={W_feat}")
+
+        # for b in range(B):
+        #     for i in range(Nc):
+        #         K = K_list[b, i]
+        #         fx, fy = K[0,0].item(), K[1,1].item()
+        #         cx, cy = K[0,2].item(), K[1,2].item()
+        #         # 원본 이미지 기준 cx,c y 와 feature map 기준 정규화된 cx_norm, cy_norm
+        #         cx_norm = cx / (W_feat - 1)
+        #         cy_norm = cy / (H_feat - 1)
+        #         print(f"[DBG] cam{ i } intrinsics:")
+        #         print(f"       fx={fx:.2f}, fy={fy:.2f}, cx={cx:.2f}, cy={cy:.2f}")
+        #         print(f"       normalized → cx_norm={cx_norm:.3f}, cy_norm={cy_norm:.3f}")
+        #         # 만약 cx_norm,cy_norm 이 0.5 근처가 아니라면
+        #         if not (0.4 < cx_norm < 0.6 and 0.4 < cy_norm < 0.6):
+        #             print(f"카메라{i} intrinsics 스케일이 feature 해상도에 안맞습니다!")
+        
         lidar2img = torch.zeros((B, N_cam, 4, 4), device=camera_feature.device)
         for b in range(B):
             for i in range(N_cam):
-                ext = torch.eye(4, device=camera_feature.device)
-                ext[:3, :3] = R_list[b, i]
-                ext[:3, 3]  = t_list[b, i]
+                # 1) 원본 sensor→lidar 행렬
+                ext_s2l = torch.eye(4, device=camera_feature.device)
+                ext_s2l[:3, :3] = R_list[b, i]
+                ext_s2l[:3,  3] = t_list[b, i]
+
+                # ─── 디버그: inverse VS manual 비교 ──────────────────────────────
+                ext_l2c_inv = torch.inverse(ext_s2l)
+                R = R_list[b, i]; t = t_list[b, i]
+                R_t = R.transpose(0,1)
+                t_t = -R_t @ t
+                ext_l2c_manual = torch.eye(4, device=camera_feature.device)
+                ext_l2c_manual[:3,:3] = R_t
+                ext_l2c_manual[:3, 3] = t_t
+                # print(f"[DBG cam{b},{i}] ext_l2c_inv:\n{ext_l2c_inv}")
+                # print(f"[DBG cam{b},{i}] ext_l2c_manual:\n{ext_l2c_manual}")
+                # ────────────────────────────────────────────────────────────────
+                # # lidar→camera 변환 (수동)
+                # ext_l2c = ext_l2c_manual
+                # # ① 먼저 inverse() 써보기
+                ext_l2c = ext_l2c_inv
+                # # ② 또는 아래처럼 수동으로 바꿔 보세요
+                # ext_l2c = ext_l2c_manual
+
+                # intrinsics → 4×4
                 K4 = torch.eye(4, device=camera_feature.device)
                 K4[:3, :3] = K_list[b, i]
-                lidar2img[b, i] = K4 @ ext
+    
+                # 최종 projection matrix
+                lidar2img[b, i] = K4 @ ext_l2c
+        # for b in range(B):
+        #     for i in range(N_cam):
+        #         # 원본 sensor→lidar 행렬로 만들고 inverse 했던 부분 제거
+        #         ext_s2l = torch.eye(4, device=camera_feature.device)
+        #         ext_s2l[:3, :3] = R_list[b, i]
+        #         ext_s2l[:3,  3] = t_list[b, i]
+        
+        #         ext_l2c = torch.inverse(ext_s2l)
+        #         # R_list, t_list 가 이미 lidar→camera 변환이므로 그대로 사용
+        #         ext_l2c = torch.eye(4, device=camera_feature.device)
+        #         ext_l2c[:3, :3] = R_list[b, i]
+        #         ext_l2c[:3,  3] = t_list[b, i]
+
+        #         # intrinsics → 4×4
+        #         K4 = torch.eye(4, device=camera_feature.device)
+        #         K4[:3, :3] = K_list[b, i]
+
+        #         # 최종 projection matrix
+        #         lidar2img[b, i] = K4 @ ext_l2c
+
+
+        # R = ext_l2c_inv[:3, :3]           # (3×3)
+        # I_approx = R @ R.t()              # R * Rᵀ
+        # ortho_err = (I_approx - torch.eye(3, device=R.device)).abs().max().item()
+        # det_R     = torch.det(R).item()
+
+        # print(f"[DBG extrinsic orthonormal error] max|R Rᵀ − I| = {ortho_err:.3e}")
+        # print(f"[DBG extrinsic determinant] det(R) = {det_R:.6f}")
 
         # 3) feat_flatten (+ embeds)
         feat_flatten = []
@@ -156,8 +205,8 @@ class BEVFormerV2(nn.Module):
             bs, num_cam, c, h, w = feat.shape
             spatial_shape = (h, w)
             feat = feat.flatten(3).permute(1, 0, 3, 2)
-            feat = feat + self.cams_embeds[:, None, None, :].to(feat.dtype)
-            feat = feat + self.level_embeds[None, None, lvl:lvl + 1, :].to(feat.dtype)
+            feat = feat + self.cams_embeds[:, None, None, :].to(feat)
+            feat = feat + self.level_embeds[None, None, lvl:lvl + 1, :].to(feat)
             spatial_shapes.append(spatial_shape)
             feat_flatten.append(feat)
         
@@ -183,11 +232,13 @@ class BEVFormerV2(nn.Module):
             lidar2img=lidar2img,
             img_shape=(H_img, W_img)
         )  # (num_q,B,dim)
-        self.prev_bev = enc_out.detach()
-        
+        # self.prev_bev = enc_out.detach()
+        self.prev_bev = None
         # 6) BEV map + Top‑Down FPN
-        bev_map = enc_out.permute(1, 2, 0).reshape(
-            B, self.dim, self.bev_pos.shape[2], self.bev_pos.shape[3])
+        bev_map = enc_out.permute(0, 2, 1) \
+                .reshape(B, self.dim,
+                         self.bev_pos.shape[2],
+                         self.bev_pos.shape[3])
         p5 = self.td_conv1(bev_map)                               # 256 → 64
         p4 = self.relu(self.td_conv2(self.td_upsample(p5)))        # 2× up
         p3 = self.relu(self.td_conv3(self.td_upsample2(p4)))       # 2× up
