@@ -109,12 +109,16 @@ class BEVFormerV2(nn.Module):
         if camera_feature.dtype == torch.uint8:
             camera_feature = camera_feature.float() / 255.0
         B, N_cam, _, H_img, W_img = camera_feature.shape
-
+        print(f"camera_feature.shape: {camera_feature[0].shape}")
         # 1) backbone + FPN
         feats = self.backbone(camera_feature.flatten(0, 1))
+        print(f"feats.shape: {feats[0].shape}")
+        print(f"feats: {len(feats)}")
         mlvl_feats = [
             f.view(B, N_cam, -1, f.shape[-2], f.shape[-1]) for f in self.fpn(feats)
         ]  # list[(B,N_cam,dim,H,W)]
+        print(f"mlvl_feats: {len(mlvl_feats)}")
+        print(f"mlvl_feats.shape: {mlvl_feats[0].shape}")
         # for lvl, f in enumerate(mlvl_feats):
         #     print(f"[DEBUG]   level {lvl}: shape={tuple(f.shape)}")
 

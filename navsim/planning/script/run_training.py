@@ -147,7 +147,6 @@ def main(cfg: DictConfig) -> None:
         model=lightning_module,
         train_dataloaders=train_dataloader,
         val_dataloaders=val_dataloader,
-        ckpt_path='/home/iclab/minseo/navsim/exp/training_transfuser_agent/2025.05.01.21.11.14/lightning_logs/version_0/checkpoints/epoch_283-step_108061.ckpt'
     )
 
 

@@ -37,15 +37,9 @@ trainer:
     limit_val_batches: 0.001  # how much of validation dataset to check (float = fraction, int = num_batches)
 
     accelerator: gpu  # distribution method
-<<<<<<< HEAD
     # strategy: ddp
     strategy: auto
     precision: 16-mixed  # floating point precision
-=======
-    strategy: ddp_find_unused_parameters_true     # distributed training strategy
-    use_distributed_sampler: false
-    precision: 32  # floating point precision
->>>>>>> f68cf516f0456e20128285f76f8e000fc6ffa8ed
     num_nodes: 1  # Number of nodes used for training
 
     num_sanity_val_steps: 0  # number of validation steps to run before training begins
